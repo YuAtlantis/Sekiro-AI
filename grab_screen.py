@@ -9,7 +9,7 @@ import win32ui
 
 
 # Use Windows API to capture the screen
-def grab_screen(region=None):
+def grab(region):
     hwin = win32gui.GetDesktopWindow()
 
     if region:
@@ -68,68 +68,52 @@ def count_red_pixels(image):
     return red_pixels
 
 
-# Main loop: real-time capture and health detection
-def main():
-    wait_time = 3  # Reduced wait time for faster startup
-    # Define regions for player and Boss health bars
-    self_blood_window = (100, 650, 448, 663)
-    boss_blood_window = (100, 180, 337, 195)
+def extract_self_and_boss_blood(self_screen, boss_screen):
+    # Maximum possible red pixel counts for player and boss health bars
+    MAX_SELF_RED_PIXELS = 2300  # Adjust this value based on actual max pixels
+    MAX_BOSS_RED_PIXELS = 630   # Adjust this value based on actual max pixels
 
-    # Wait for initialization
-    for i in list(range(wait_time))[::-1]:
-        print(f"Program will start in {i + 1} seconds")
-        time.sleep(1)
+    # Calculate current red pixel count
+    self_current_red = count_red_pixels(self_screen)
+    boss_current_red = count_red_pixels(boss_screen)
 
-    # Capture the initial screen regions to get the initial baseline red pixel counts
-    self_screen = grab_screen(self_blood_window)
-    boss_screen = grab_screen(boss_blood_window)
+    # Initialize or update the baseline red pixel counts
+    if not hasattr(extract_self_and_boss_blood, "self_baseline_red"):
+        extract_self_and_boss_blood.self_baseline_red = self_current_red
+    else:
+        extract_self_and_boss_blood.self_baseline_red = max(extract_self_and_boss_blood.self_baseline_red, self_current_red)
 
-    # Get the initial baseline red pixel count
-    self_baseline_red = count_red_pixels(self_screen)
-    boss_baseline_red = count_red_pixels(boss_screen)
+    if not hasattr(extract_self_and_boss_blood, "boss_baseline_red"):
+        extract_self_and_boss_blood.boss_baseline_red = boss_current_red
+    else:
+        extract_self_and_boss_blood.boss_baseline_red = max(extract_self_and_boss_blood.boss_baseline_red, boss_current_red)
 
-    while True:
-        # Capture screen regions
-        self_screen = grab_screen(self_blood_window)
-        boss_screen = grab_screen(boss_blood_window)
+    # Cap the baseline red pixel counts to the predefined maximums
+    self_baseline_red = min(extract_self_and_boss_blood.self_baseline_red, MAX_SELF_RED_PIXELS)
+    boss_baseline_red = min(extract_self_and_boss_blood.boss_baseline_red, MAX_BOSS_RED_PIXELS)
 
-        # Calculate current red pixel count
-        self_current_red = count_red_pixels(self_screen)
-        boss_current_red = count_red_pixels(boss_screen)
-        print(self_baseline_red)
-        print(self_current_red)
+    print(f'Player current red: {self_current_red:.2f} pixels, Player baseline red: {self_baseline_red:.2f} pixels')
+    print(f'Boss current red: {boss_current_red:.2f} pixels, Boss baseline red: {boss_baseline_red:.2f} pixels')
 
-        # Update the baseline if current red pixel count is significantly higher (indicating health increase)
-        if self_baseline_red < self_current_red < 2000:  # Use a threshold to avoid false positives due to noise
-            self_baseline_red = self_current_red
+    # Calculate the health percentage relative to the baseline
+    if self_baseline_red > 0:
+        self_health_percentage = (self_current_red / self_baseline_red) * 100
+        self_health_percentage = min(self_health_percentage, 100)  # Cap at 100%
+    else:
+        self_health_percentage = 0
 
-        if boss_baseline_red < boss_current_red < 635:
-            boss_baseline_red = boss_current_red
+    if boss_baseline_red > 0:
+        boss_health_percentage = (boss_current_red / boss_baseline_red) * 100
+        boss_health_percentage = min(boss_health_percentage, 100)  # Cap at 100%
+    else:
+        boss_health_percentage = 0
 
-        # Calculate the health percentage relative to the baseline
-        if self_baseline_red > 0:
-            self_health_percentage = (self_current_red / self_baseline_red) * 100
-        else:
-            self_health_percentage = 0
+    # Output health information
+    print(f'Player Health: {self_health_percentage:.2f}%, Boss Health: {boss_health_percentage:.2f}%')
 
-        if boss_baseline_red > 0:
-            boss_health_percentage = (boss_current_red / boss_baseline_red) * 100
-        else:
-            boss_health_percentage = 0
+    # Display the health bar images for debugging
+    cv2.imshow('Player Health Bar', self_screen)
+    cv2.imshow('Boss Health Bar', boss_screen)
 
-        # Output health information
-        print(f'Player Health: {self_health_percentage:.2f}%, Boss Health: {boss_health_percentage:.2f}%')
+    return self_health_percentage, boss_health_percentage
 
-        # Display the health bar images for debugging
-        cv2.imshow('Player Health Bar', self_screen)
-        cv2.imshow('Boss Health Bar', boss_screen)
-
-        # Press 'q' key to exit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cv2.destroyAllWindows()
-
-
-if __name__ == '__main__':
-    main()
