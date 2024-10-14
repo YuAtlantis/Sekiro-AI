@@ -2,15 +2,16 @@ import time
 import input_keys
 
 
-def take_action(action_index):
-    if action_index == 0:
-        input_keys.defense()
-    elif action_index == 1:
-        input_keys.attack()
-    elif action_index == 2:
-        input_keys.tiptoe()
-    elif action_index == 3:
-        input_keys.jump()
+def take_action(action_index, debugged):
+    if not debugged:
+        if action_index == 0:
+            input_keys.defense()
+        elif action_index == 1:
+            input_keys.attack()
+        elif action_index == 2:
+            input_keys.tiptoe()
+        elif action_index == 3:
+            input_keys.jump()
 
 
 def wait_before_start(seconds, paused):
@@ -20,13 +21,14 @@ def wait_before_start(seconds, paused):
     print("Game paused." if paused else "Game started.")
 
 
-def restart():
-    print("----------You dead,restart a new round----------")
-    time.sleep(8)
-    input_keys.lock_vision()
-    time.sleep(0.2)
-    input_keys.attack()
-    print("----------A new round has already started----------")
+def restart(debugged):
+    if not debugged:
+        print("----------You dead,restart a new round----------")
+        time.sleep(7)
+        input_keys.lock_vision()
+        time.sleep(1)
+        input_keys.attack()
+        print("----------A new round has already started----------")
 
 
 def pause_game(paused):

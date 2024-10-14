@@ -1,19 +1,18 @@
 import cv2
 import time
 import numpy as np
+import dueling_dqn
 from game_control import take_action, pause_game, restart
-from dueling_dqn import DQNAgent
 from grab_screen import grab, extract_self_and_boss_blood
 
 input_channels = 3
 action_space = 2
-model_file = ""
+model_file = "dueling_dqn_trained"
 
 
-def action_judge(boss_blood, next_boss_blood, self_blood, next_self_blood,
+def action_judge(boss_hp, next_boss_hp, self_hp, next_self_hp,
                  self_stop, boss_stop, emergence_break_mark):
-    # Check if the game is over
-    if next_self_blood < 5:
+    if next_self_hp < 2:
         reward = -10
         finish_flag = 1
         self_stop = 0
@@ -22,7 +21,7 @@ def action_judge(boss_blood, next_boss_blood, self_blood, next_self_blood,
         print(f'You are dead and get the reward: {reward:.2f}')
         return reward, finish_flag, self_stop, boss_stop, emergence_break_mark
 
-    if next_boss_blood < 8:
+    if next_boss_hp < 2:
         reward = 20
         finish_flag = 0
         self_stop = 0
@@ -32,12 +31,10 @@ def action_judge(boss_blood, next_boss_blood, self_blood, next_self_blood,
         return reward, finish_flag, self_stop, boss_stop, emergence_break_mark
 
     # Calculate the change in health
-    delta_self = next_self_blood - self_blood
-    delta_boss = next_boss_blood - boss_blood
+    delta_self = next_self_hp - self_hp
+    delta_boss = next_boss_hp - boss_hp
 
-    print(f'Next moment self red: {next_self_blood:.2f}%, self current red: {self_blood:.2f} pixels')
     print(f'delta_self: {delta_self}')
-    print(f'Next moment boss red: {next_boss_blood:.2f}%, boss current red: {boss_blood:.2f} pixels')
     print(f'delta_boss: {delta_boss}')
 
     # Initialize reward
@@ -67,15 +64,17 @@ def action_judge(boss_blood, next_boss_blood, self_blood, next_self_blood,
 
 
 if __name__ == '__main__':
+    debugged = False
     paused = True
     width = 96
     height = 88
     episodes = 3000
     emergence_break = 0
-    self_blood_window = (100, 650, 448, 663)
-    boss_blood_window = (100, 180, 337, 195)
+    self_blood_window = (100, 650, 450, 665)
+    boss_blood_window = (100, 180, 340, 195)
 
-    agent = DQNAgent(input_channels, action_space, model_file)
+    agent = dueling_dqn.DQNAgent(input_channels, action_space, model_file)
+    TRAIN_BATCH_SIZE = dueling_dqn.SMALL_BATCH_SIZE
 
     for episode in range(episodes):
         self_stop_mark = 0
@@ -105,7 +104,7 @@ if __name__ == '__main__':
             action = agent.choose_action(state)
 
             # Take the selected action
-            take_action(action)
+            take_action(action, debugged)
 
             self_screen = grab(self_blood_window)
             boss_screen = grab(boss_blood_window)
@@ -125,6 +124,9 @@ if __name__ == '__main__':
                                                                                                 emergence_break)
             agent.store_transition(state, action, action_reward, next_state, done)
 
+            if target_step % TRAIN_BATCH_SIZE == 0:
+                agent.train(TRAIN_BATCH_SIZE, episode)
+
             # Update self_blood and boss_blood for the next iteration
             self_blood = next_self_blood
             boss_blood = next_boss_blood
@@ -134,7 +136,13 @@ if __name__ == '__main__':
 
             paused = pause_game(paused)
 
-        restart()
+        if episode != 0:
+            if episode % 10 == 0:
+                agent.update_target_network()
+            if episode % 10 == 0:
+                agent.save_model(episode)
+
+        restart(debugged)
 
     cv2.destroyAllWindows()
 

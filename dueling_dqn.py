@@ -1,11 +1,13 @@
+import os
+import random
 import torch
+import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as functional
-import random
 from collections import deque
-import os
 from torchvision import models
+from torch.utils.tensorboard import SummaryWriter
 
 # Experience replay buffer size
 REPLAY_SIZE = 2000
@@ -20,6 +22,9 @@ INITIAL_EPSILON = 0.5
 FINAL_EPSILON = 0.01
 LR = 0.001
 
+# Check if GPU is available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 class DuelingDQN(nn.Module):
     def __init__(self, input_channels, action_space):
@@ -27,20 +32,20 @@ class DuelingDQN(nn.Module):
         self.action_dim = action_space
 
         # Using ResNet for feature extraction
-        self.feature_extractor = models.resnet18(pretrained=True)
+        self.feature_extractor = models.resnet152(pretrained=True)
         self.feature_extractor.conv1 = nn.Conv2d(input_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.feature_extractor.fc = nn.Identity()  # Remove the final classification layer
 
         # Fully connected layers for state value stream
         self.value_stream = nn.Sequential(
-            nn.Linear(512, 256),
+            nn.Linear(2048, 256),
             nn.ReLU(),
             nn.Linear(256, 1)
         )
 
         # Fully connected layers for advantage stream
         self.advantage_stream = nn.Sequential(
-            nn.Linear(512, 256),
+            nn.Linear(2048, 256),
             nn.ReLU(),
             nn.Linear(256, action_space)
         )
@@ -68,8 +73,8 @@ class DQNAgent:
         self.replay_buffer = deque(maxlen=REPLAY_SIZE)
 
         # Initialize networks
-        self.eval_net = DuelingDQN(input_channels, action_space)
-        self.target_net = DuelingDQN(input_channels, action_space)
+        self.eval_net = DuelingDQN(input_channels, action_space).to(device)
+        self.target_net = DuelingDQN(input_channels, action_space).to(device)
         self.update_target_network()
 
         # Optimizer
@@ -78,6 +83,8 @@ class DQNAgent:
         # Epsilon for epsilon-greedy policy
         self.epsilon = INITIAL_EPSILON
         self.model_file = model_file
+        # TensorBoard SummaryWriter
+        self.writer = SummaryWriter(log_dir='./logs')  # 创建日志文件夹
 
         # Load model if it exists
         if os.path.exists(self.model_file):
@@ -95,7 +102,7 @@ class DQNAgent:
             action = random.randint(0, self.action_dim - 1)
         else:
             # Greedy action
-            state = torch.FloatTensor(state).unsqueeze(0)
+            state = torch.FloatTensor(state).unsqueeze(0).to(device)  # Move state to device
             if len(state.shape) == 4:  # Ensure input is 4D (batch, channels, height, width)
                 q_values = self.eval_net(state)
                 action = torch.argmax(q_values, dim=1).item()
@@ -108,17 +115,19 @@ class DQNAgent:
     def store_transition(self, state, action, reward, next_state, done):
         self.replay_buffer.append((state, action, reward, next_state, done))
 
-    def train(self, batch_size):
+    def train(self, batch_size, step):
         if len(self.replay_buffer) < batch_size:
             return
 
         # Sample a minibatch from the replay buffer
         minibatch = random.sample(self.replay_buffer, batch_size)
-        state_batch = torch.FloatTensor([data[0] for data in minibatch])
-        action_batch = torch.LongTensor([data[1] for data in minibatch]).unsqueeze(1)
-        reward_batch = torch.FloatTensor([data[2] for data in minibatch])
-        next_state_batch = torch.FloatTensor([data[3] for data in minibatch])
-        done_batch = torch.FloatTensor([data[4] for data in minibatch])
+
+        # Convert lists of numpy arrays to numpy arrays before converting to tensors
+        state_batch = torch.FloatTensor(np.array([data[0] for data in minibatch])).to(device)
+        action_batch = torch.LongTensor(np.array([data[1] for data in minibatch])).unsqueeze(1).to(device)
+        reward_batch = torch.FloatTensor(np.array([data[2] for data in minibatch])).to(device)
+        next_state_batch = torch.FloatTensor(np.array([data[3] for data in minibatch])).to(device)
+        done_batch = torch.FloatTensor(np.array([data[4] for data in minibatch])).to(device)
 
         # Compute current Q values
         q_values = self.eval_net(state_batch).gather(1, action_batch).squeeze(1)
@@ -136,6 +145,13 @@ class DQNAgent:
         loss.backward()
         self.optimizer.step()
 
-    def save_model(self):
-        torch.save(self.eval_net.state_dict(), self.model_file)
-        print("Model saved to", self.model_file)
+        # Write loss to TensorBoard
+        self.writer.add_scalar('Loss/train', loss.item(), step)
+
+    def save_model(self, episode):
+        save_dir = './models'
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        filename = f"{save_dir}/{self.model_file}_episode_{episode}.pt"
+        torch.save(self.eval_net.state_dict(), filename)
+        print("Model saved to", filename)
