@@ -1,6 +1,4 @@
-import ctypes
-
-# 键位定义
+# The input of the keyboard
 KEY_CODES = {
     'W': 0x11,
     'A': 0x1E,
@@ -27,7 +25,7 @@ KEY_CODES = {
     'SPACE': 0x39
 }
 
-# 鼠标操作定义
+# The input of the mouse
 MOUSE_CODES = {
     'LEFT_CLICK': 0x0002,
     'LEFT_RELEASE': 0x0004,

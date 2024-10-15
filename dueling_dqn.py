@@ -84,14 +84,21 @@ class DQNAgent:
         self.epsilon = INITIAL_EPSILON
         self.model_file = model_file
         # TensorBoard SummaryWriter
-        self.writer = SummaryWriter(log_dir='./logs')  # 创建日志文件夹
+        self.writer = SummaryWriter(log_dir='./logs')
 
-        # Load model if it exists
         if os.path.exists(self.model_file):
-            print("Model exists, loading model...\n")
-            self.eval_net.load_state_dict(torch.load(self.model_file))
-        else:
-            print("Model does not exist, creating new one...\n")
+            if os.path.isdir(self.model_file):
+                files = [f for f in os.listdir(self.model_file) if f.endswith('.pth')]
+                if files:
+                    files.sort(key=lambda x: os.path.getmtime(os.path.join(self.model_file, x)), reverse=True)
+                    model_path = os.path.join(self.model_file, files[0])
+                    print(f"Loading model from {model_path}...\n")
+                    self.eval_net.load_state_dict(torch.load(model_path))
+                else:
+                    print("No model files found in the folder.\n")
+            else:
+                print("Model exists, loading model...\n")
+                self.eval_net.load_state_dict(torch.load(self.model_file))
 
     def update_target_network(self):
         self.target_net.load_state_dict(self.eval_net.state_dict())
@@ -149,9 +156,6 @@ class DQNAgent:
         self.writer.add_scalar('Loss/train', loss.item(), step)
 
     def save_model(self, episode):
-        save_dir = './models'
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        filename = f"{save_dir}/{self.model_file}_episode_{episode}.pt"
+        filename = f"./{self.model_file}/dueling_dqn_trained_episode_{episode}.pth"
         torch.save(self.eval_net.state_dict(), filename)
         print("Model saved to", filename)

@@ -44,19 +44,19 @@ class Input(ctypes.Structure):
 
 def left_click():
     mouse_action(MOUSE_CODES['LEFT_CLICK'])
-    time.sleep(0.05)
+    time.sleep(0.03)
     mouse_action(MOUSE_CODES['LEFT_RELEASE'])
 
 
 def right_click():
     mouse_action(MOUSE_CODES['RIGHT_CLICK'])
-    time.sleep(0.05)
+    time.sleep(0.03)
     mouse_action(MOUSE_CODES['RIGHT_RELEASE'])
 
 
 def middle_click():
     mouse_action(MOUSE_CODES['MIDDLE_CLICK'])
-    time.sleep(0.05)
+    time.sleep(0.03)
     mouse_action(MOUSE_CODES['MIDDLE_RELEASE'])
 
 
@@ -98,7 +98,8 @@ def perform_action(action, duration):
 
 
 def defense():
-    right_click()
+    perform_action('K', 0.1)
+    print("Right click for defense!")
 
 
 def attack():
@@ -106,7 +107,7 @@ def attack():
 
 
 def go_forward():
-    perform_action('W', 0.2)
+    right_click()
 
 
 def go_back():
@@ -137,10 +138,10 @@ def press_esc():
     perform_action('ESC', 0.3)
 
 
-def forward_jump():
-    press_key(KEY_CODES['W'], 0.01)
-    jump()
-    release_key(KEY_CODES['W'])
+def backward_dodge():
+    press_key(KEY_CODES['S'], 0.01)
+    tiptoe()
+    release_key(KEY_CODES['S'])
 
 
 keyList = ["\b"]
@@ -156,7 +157,10 @@ def key_check():
     return keys
 
 
-if __name__ == '__main__':
-    time.sleep(5)
-    forward_jump()
-    time.sleep(1)
+def clear_action_state():
+    for key in KEY_CODES.values():
+        release_key(key)
+
+    for action_name, action_code in MOUSE_CODES.items():
+        if "CLICK" in action_name:
+            mouse_action(action_code)
