@@ -44,19 +44,19 @@ class Input(ctypes.Structure):
 
 def left_click():
     mouse_action(MOUSE_CODES['LEFT_CLICK'])
-    time.sleep(0.03)
+    time.sleep(0.05)
     mouse_action(MOUSE_CODES['LEFT_RELEASE'])
 
 
 def right_click():
     mouse_action(MOUSE_CODES['RIGHT_CLICK'])
-    time.sleep(0.03)
+    time.sleep(0.05)
     mouse_action(MOUSE_CODES['RIGHT_RELEASE'])
 
 
 def middle_click():
     mouse_action(MOUSE_CODES['MIDDLE_CLICK'])
-    time.sleep(0.03)
+    time.sleep(0.05)
     mouse_action(MOUSE_CODES['MIDDLE_RELEASE'])
 
 
@@ -98,7 +98,7 @@ def perform_action(action, duration):
 
 
 def defense():
-    perform_action('K', 0.1)
+    right_click()
 
 
 def attack():
@@ -106,11 +106,11 @@ def attack():
 
 
 def jump():
-    perform_action('SPACE', 0.1)
+    perform_action('SPACE', 0.12)
 
 
 def tiptoe():
-    perform_action("E", 0.1)
+    perform_action("E", 0.12)
 
 
 def lock_vision():

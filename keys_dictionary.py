@@ -17,12 +17,16 @@ KEY_CODES = {
     'P': 0x19,
     'C': 0x2E,
     'F': 0x21,
+    'Z': 0x2C,
     'UP': 0xC8,
     'DOWN': 0xD0,
     'LEFT': 0xCB,
     'RIGHT': 0xCD,
     'ESC': 0x01,
-    'SPACE': 0x39
+    'SPACE': 0x39,
+    '1': 0x02,
+    '2': 0x03,
+    '3': 0x04
 }
 
 # The input of the mouse

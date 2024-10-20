@@ -105,7 +105,6 @@ class DQNAgent:
 
     def choose_action(self, state):
         if random.random() <= self.epsilon:
-            # Random action
             action = random.randint(0, self.action_dim - 1)
         else:
             # Greedy action
@@ -116,7 +115,7 @@ class DQNAgent:
             else:
                 raise ValueError("State input must have 4 dimensions: [batch, channels, height, width]")
         # Update epsilon
-        self.epsilon = max(FINAL_EPSILON, self.epsilon - (INITIAL_EPSILON - FINAL_EPSILON) / 10000)
+        self.epsilon = max(FINAL_EPSILON, self.epsilon - (INITIAL_EPSILON - FINAL_EPSILON) / 1000)
         return action
 
     def store_transition(self, state, action, reward, next_state, done):
