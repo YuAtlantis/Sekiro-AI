@@ -13,6 +13,7 @@ def grab(region):
     hwin = win32gui.GetDesktopWindow()
 
     if region:
+        # x, y, x_w, y_h
         left, top, x2, y2 = region
         width = x2 - left + 1
         height = y2 - top + 1
@@ -39,7 +40,7 @@ def grab(region):
     win32gui.ReleaseDC(hwin, hwindc)
     win32gui.DeleteObject(bmp.GetHandle())
 
-    return img[..., :3]  # Return only RGB channels
+    return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
 
 
 # Calculate the number of red pixels in an image
@@ -70,50 +71,87 @@ def count_red_pixels(image):
 
 def extract_self_and_boss_blood(self_screen, boss_screen):
     # Maximum possible red pixel counts for player and boss health bars
-    MAX_SELF_RED_PIXELS = 2300  # Adjust this value based on actual max pixels
-    MAX_BOSS_RED_PIXELS = 630   # Adjust this value based on actual max pixels
+    MAX_SELF_RED_PIXELS = 2300
+    MAX_BOSS_RED_PIXELS = 630
 
-    # Calculate current red pixel count
-    self_current_red = count_red_pixels(self_screen)
-    boss_current_red = count_red_pixels(boss_screen)
+    def calculate_health(screen, max_red_pixels, baseline_attr_name):
+        current_red = count_red_pixels(screen)
 
-    # Initialize or update the baseline red pixel counts
-    if not hasattr(extract_self_and_boss_blood, "self_baseline_red"):
-        extract_self_and_boss_blood.self_baseline_red = self_current_red
-    else:
-        extract_self_and_boss_blood.self_baseline_red = max(extract_self_and_boss_blood.self_baseline_red, self_current_red)
+        # Initialize or update the baseline red pixel count
+        if not hasattr(extract_self_and_boss_blood, baseline_attr_name):
+            setattr(extract_self_and_boss_blood, baseline_attr_name, current_red)
+        else:
+            baseline_red = getattr(extract_self_and_boss_blood, baseline_attr_name)
+            setattr(extract_self_and_boss_blood, baseline_attr_name, max(baseline_red, current_red))
 
-    if not hasattr(extract_self_and_boss_blood, "boss_baseline_red"):
-        extract_self_and_boss_blood.boss_baseline_red = boss_current_red
-    else:
-        extract_self_and_boss_blood.boss_baseline_red = max(extract_self_and_boss_blood.boss_baseline_red, boss_current_red)
+        # Cap the baseline red pixel count to the predefined maximum
+        baseline_red = min(getattr(extract_self_and_boss_blood, baseline_attr_name), max_red_pixels)
 
-    # Cap the baseline red pixel counts to the predefined maximums
-    self_baseline_red = min(extract_self_and_boss_blood.self_baseline_red, MAX_SELF_RED_PIXELS)
-    boss_baseline_red = min(extract_self_and_boss_blood.boss_baseline_red, MAX_BOSS_RED_PIXELS)
+        # Calculate the health percentage relative to the baseline
+        if baseline_red > 0:
+            health_percentage = (current_red / baseline_red) * 100
+            return min(health_percentage, 100)  # Cap at 100%
+        else:
+            return 0
 
-    print(f'Player current red: {self_current_red:.2f} pixels, Player baseline red: {self_baseline_red:.2f} pixels')
-    print(f'Boss current red: {boss_current_red:.2f} pixels, Boss baseline red: {boss_baseline_red:.2f} pixels')
-
-    # Calculate the health percentage relative to the baseline
-    if self_baseline_red > 0:
-        self_health_percentage = (self_current_red / self_baseline_red) * 100
-        self_health_percentage = min(self_health_percentage, 100)  # Cap at 100%
-    else:
-        self_health_percentage = 0
-
-    if boss_baseline_red > 0:
-        boss_health_percentage = (boss_current_red / boss_baseline_red) * 100
-        boss_health_percentage = min(boss_health_percentage, 100)  # Cap at 100%
-    else:
-        boss_health_percentage = 0
+    # Calculate health percentages for both player and boss
+    self_health_percentage = calculate_health(self_screen, MAX_SELF_RED_PIXELS, "self_baseline_red")
+    boss_health_percentage = calculate_health(boss_screen, MAX_BOSS_RED_PIXELS, "boss_baseline_red")
 
     # Output health information
     print(f'Player Health: {self_health_percentage:.2f}%, Boss Health: {boss_health_percentage:.2f}%')
 
     # Display the health bar images for debugging
     cv2.imshow('Player Health Bar', self_screen)
+    cv2.moveWindow('Player Health Bar', 100, 570)
     cv2.imshow('Boss Health Bar', boss_screen)
+    cv2.moveWindow('Boss Health Bar', 100, 640)
 
     return self_health_percentage, boss_health_percentage
 
+
+def extract_posture_bar(self_screen, boss_screen):
+    # Define the HSV range for detecting the posture bar color
+    LOWER_COLOR = np.array([0, 100, 100])
+    UPPER_COLOR = np.array([30, 255, 255])
+
+    # Function to calculate posture for a given screen
+    def calculate_posture_percentage(screen):
+        h, w = screen.shape[:2]
+
+        # Convert to HSV for color detection
+        hsv = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)
+
+        # Create a mask for the defined color range
+        mask_color = cv2.inRange(hsv, LOWER_COLOR, UPPER_COLOR)
+
+        # Focus on the middle section to ignore side decorations
+        mid_section = mask_color[:, w // 4:3 * w // 4]
+        color_ratio = 2 * cv2.countNonZero(mid_section) / (mid_section.shape[0] * mid_section.shape[1])
+
+        # Perform edge detection
+        gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+        edge_ratio = np.count_nonzero(edges) / (w * h)
+
+        # Determine posture percentage based on thresholds
+        if color_ratio > 0.1 and edge_ratio > 0.01:  # Adjust thresholds based on actual data
+            return min(color_ratio, 1) * 100  # Convert to percentage and cap at 100%
+        else:
+            return 0  # No detectable posture bar
+
+    # Calculate posture percentages for both player and boss
+    self_posture_percentage = calculate_posture_percentage(self_screen)
+    boss_posture_percentage = calculate_posture_percentage(boss_screen)
+
+    # Output posture information
+    print(f'Player Posture: {self_posture_percentage:.2f}%, Boss Posture: {boss_posture_percentage:.2f}%')
+
+    # Display the posture bar images for debugging
+    cv2.imshow('Player Posture Bar', self_screen)
+    cv2.moveWindow('Player Posture Bar', 100, 710)
+    cv2.imshow('Boss Posture Bar', boss_screen)
+    cv2.moveWindow('Boss Posture Bar', 100, 780)
+
+    return self_posture_percentage, boss_posture_percentage

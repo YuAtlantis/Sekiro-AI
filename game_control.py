@@ -9,8 +9,6 @@ def take_action(action_index, debugged):
         elif action_index == 1:
             input_keys.attack()
         elif action_index == 2:
-            input_keys.backward_dodge()
-        elif action_index == 3:
             input_keys.tiptoe()
 
 
@@ -24,12 +22,12 @@ def wait_before_start(seconds, paused):
 def restart(debugged):
     if not debugged:
         print("----------You dead, restart a new round----------")
-        time.sleep(8)
-        input_keys.clear_action_state()  # 清除所有动作状态，避免执行未完成的动作
+        time.sleep(8.5)
+        input_keys.clear_action_state()
         input_keys.lock_vision()
-        time.sleep(0.5)  # 等待视角锁定完成
+        time.sleep(1)
         print("Waiting before taking further actions...")
-        time.sleep(2)  # 额外的等待时间以避免在游戏不稳定时执行攻击
+        time.sleep(2)
         input_keys.attack()
         print("----------A new round has already started----------")
 

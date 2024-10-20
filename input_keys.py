@@ -99,27 +99,10 @@ def perform_action(action, duration):
 
 def defense():
     perform_action('K', 0.1)
-    print("Right click for defense!")
 
 
 def attack():
     left_click()
-
-
-def go_forward():
-    right_click()
-
-
-def go_back():
-    perform_action('S', 0.2)
-
-
-def go_left():
-    perform_action('A', 0.2)
-
-
-def go_right():
-    perform_action('D', 0.2)
 
 
 def jump():
