@@ -28,7 +28,8 @@ For the boss posture bar, there are two parts:
 
 **Color Detection**: Detects the specific color of the pose bar (orange), only analyzing the middle area of the image and ignoring the irrelevant edge parts.  
 
-**Edge Detection**: Converts the image to grayscale and applies edge detection (Canny) to further confirm the presence of the pose bar by the number of edges.
+**Edge Detection**: Converts the image to grayscale and applies edge detection (Canny) to further confirm the presence of the pose bar by the number of edges.  
+
 ![boss_posture_bar.png](img/boss_posture_bar.png)  
 
 **Control Implementation**: We're using the `ctypes` package to control keyboard inputs.  
