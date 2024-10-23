@@ -4,9 +4,11 @@ import torch
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.utils as utils
 import torch.nn.functional as functional
 from collections import deque
 from torchvision import models
+# tensorboard --logdir=logs
 from torch.utils.tensorboard import SummaryWriter
 
 # Experience replay buffer size
@@ -83,7 +85,6 @@ class DQNAgent:
         # Epsilon for epsilon-greedy policy
         self.epsilon = INITIAL_EPSILON
         self.model_file = model_file
-        # TensorBoard SummaryWriter
         self.writer = SummaryWriter(log_dir='./logs')
 
         if os.path.exists(self.model_file):
@@ -149,10 +150,17 @@ class DQNAgent:
         # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
+
+        # Record the gradient norm (to track if gradients are too large or too small)
+        total_norm = utils.clip_grad_norm_(self.eval_net.parameters(), max_norm=10)
         self.optimizer.step()
 
         # Write loss to TensorBoard
         self.writer.add_scalar('Loss/train', loss.item(), step)
+        self.writer.add_scalar('Epsilon', self.epsilon, step)
+        self.writer.add_scalar('Total reward', torch.sum(reward_batch).item(), step)
+        self.writer.add_scalar('Max Q value', q_values.max().item(), step)
+        self.writer.add_scalar('Gradient norm', total_norm, step)
 
     def save_model(self, episode):
         filename = f"./{self.model_file}/dueling_dqn_trained_episode_{episode}.pth"
