@@ -9,12 +9,16 @@ def take_action(action_index, debugged, tool_manager):
         elif action_index == 1:
             input_keys.attack()
         elif action_index == 2:
-            input_keys.tiptoe()
-        elif action_index == 3:
             input_keys.jump()
-        elif action_index in [4, 5, 6]:
+        elif action_index == 3:
+            input_keys.left_dodge()
+        elif action_index == 4:
+            input_keys.right_dodge()
+        elif action_index == 5:
+            input_keys.heal()
+        elif action_index in [6, 7, 8]:
             if not tool_manager.tools_exhausted:
-                tool_manager.use_specific_tool(action_index - 4)
+                tool_manager.use_specific_tool(action_index - 6)
             else:
                 print(f"Action {action_index} is no longer valid as tools are exhausted.")
 
@@ -48,15 +52,15 @@ def restart(debugged, boss_defeated=False):
 
 
 def pause_game(paused):
-    # Press T to start/stop the grab
     while True:
         keys = input_keys.key_check()
         if 'T' in keys:
             paused = not paused
             print('Game paused' if paused else 'Game started')
-            wait_before_start(5, paused)
-
-        if not paused:
+            wait_before_start(3, paused)
+        if paused:
+            time.sleep(1)
+        else:
             break
 
     return paused

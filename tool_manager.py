@@ -1,4 +1,3 @@
-import time
 from input_keys import perform_action
 
 
@@ -7,12 +6,10 @@ class ToolManager:
         self.tools = ['Tool 1', 'Tool 2', 'Tool 3']
         self.current_tool_index = 0
         self.remaining_uses = 19
-        self.cooldown = 4
-        self.last_tool_use_time = 0
         self.tools_exhausted = False
 
     def change_tool(self):
-        perform_action("Z", 0.1)
+        perform_action("Z", 0.3)
         self.current_tool_index = (self.current_tool_index + 1) % len(self.tools)
         print(f"Changed to {self.tools[self.current_tool_index]}.")
 
@@ -23,14 +20,24 @@ class ToolManager:
 
     def use_tool(self):
         if self.remaining_uses > 0:
-            current_time = time.time()
-            if current_time - self.last_tool_use_time >= self.cooldown:
+            usage_cost = 1
+            if self.current_tool_index == 0:
+                usage_cost = 1
+            elif self.current_tool_index == 1:
+                usage_cost = 2
+            elif self.current_tool_index == 2:
+                usage_cost = 3
+
+            if self.remaining_uses >= usage_cost:
                 perform_action("3", 0.1)
                 print(f"Using {self.tools[self.current_tool_index]}.")
-                self.remaining_uses -= 1
+                self.remaining_uses -= usage_cost
                 print(f"Remaining uses for tools: {self.remaining_uses}")
+
             else:
-                print(f"{self.tools[self.current_tool_index]} not cooldown right now")
+                print(f"Not enough uses left for {self.tools[self.current_tool_index]}.")
+                self.tools_exhausted = True
+
         else:
             print(f"No more uses available for {self.tools[self.current_tool_index]}")
             self.tools_exhausted = True

@@ -3,8 +3,8 @@ import time
 import torch
 import torch.nn.functional as F
 import numpy as np
-import dueling_dqn
 import dueling_dqn_manual
+from dueling_dqn import DQNAgent, SMALL_BATCH_SIZE
 from tool_manager import ToolManager
 from game_control import take_action, pause_game, restart
 from grab_screen import grab, extract_self_and_boss_blood, extract_posture_bar
@@ -22,10 +22,16 @@ class GameEnvironment:
             'boss_posture': (315, 73, 710, 88)
         }
         self.paused = True
+        self.manual = False
         self.debugged = False
+        self.is_dead = False
+        self.boss_has_extra_life = True
+        self.boss_phase1_complete = False
+        self.boss_phase2_complete = False
         self.self_stop_mark = 0
         self.boss_stop_mark = 0
         self.target_step = 0
+        self.heal_count = 9
 
     def grab_screens(self):
         return {key: grab(window) for key, window in self.windows.items()}
@@ -56,12 +62,13 @@ class GameEnvironment:
         self.self_stop_mark = 0
         self.boss_stop_mark = 0
         self.target_step = 0
+        self.is_dead = False
 
 
 class GameAgent:
-    def __init__(self, input_channels=12, action_space=7, model_file="./models"):
-        self.dqn_agent = dueling_dqn.DQNAgent(input_channels, action_space, model_file)
-        self.TRAIN_BATCH_SIZE = dueling_dqn.SMALL_BATCH_SIZE
+    def __init__(self, input_channels=12, action_space=9, model_file="./models"):
+        self.dqn_agent = DQNAgent(input_channels, action_space, model_file)
+        self.TRAIN_BATCH_SIZE = SMALL_BATCH_SIZE
 
     def choose_action(self, state):
         return self.dqn_agent.choose_action(state)
@@ -91,7 +98,6 @@ class GameState:
 class GameController:
     def __init__(self):
         self.total_reward = 0
-        self.manual = True
         self.env = GameEnvironment()
         self.agent = GameAgent()
         self.tool_manager = ToolManager()
@@ -99,15 +105,28 @@ class GameController:
 
     def action_judge(self, state):
         if state.next['self_hp'] < 2:
-            reward, done = -10, 1
-            self.total_reward += reward
-            self.env.reset_marks()
-            print(f'You are dead and get the reward: {reward:.2f}')
-        elif state.next['boss_hp'] < 4:
-            reward, done = 30, 2
-            self.env.reset_marks()
-            self.total_reward += reward
-            print(f'You finally beat the boss and get the reward: {reward:.2f}')
+            if not self.env.is_dead:
+                reward, done = -10, 1
+                self.total_reward += reward
+                self.env.is_dead = True
+                self.env.reset_marks()
+                print(f'You are dead and get the reward: {reward:.2f}')
+            else:
+                reward, done = 0, 1
+        elif state.next['boss_hp'] < 3:
+            if self.env.boss_has_extra_life and not self.env.boss_phase1_complete:
+                self.env.boss_has_extra_life = False
+                reward, done = 30, 0
+                print(f'You beat the first phase of the boss! Reward: {reward:.2f}')
+                self.env.boss_phase1_complete = True
+            elif not self.env.boss_has_extra_life and not self.env.boss_phase2_complete:
+                reward, done = 40, 2
+                self.env.reset_marks()
+                self.total_reward += reward
+                print(f'You finally beat the boss and get the reward: {reward:.2f}')
+                self.env.boss_phase2_complete = True
+            else:
+                reward, done = 0, 0
         else:
             deltas = {key: state.next[key] - state.current[key] for key in state.current}
             reward = self.calculate_reward(deltas)
@@ -119,29 +138,31 @@ class GameController:
     def calculate_reward(self, deltas):
         reward = 0
         if deltas['self_hp'] <= -6 and self.env.self_stop_mark == 0:
-            reward -= 4
+            reward -= 3
             self.env.self_stop_mark = 1
         else:
             self.env.self_stop_mark = 0
 
         if deltas['boss_hp'] <= -3 and self.env.boss_stop_mark == 0:
-            reward += 10
+            reward += 15
             self.env.boss_stop_mark = 1
         else:
             self.env.boss_stop_mark = 0
 
-        if deltas['self_posture'] > 10:
+        if deltas['self_posture'] > 8:
             reward -= 2
 
         if deltas['boss_posture'] > 8:
-            reward += 5
+            reward += 8
 
         return reward
 
     def run(self):
-        grab_interval = 0.1  # Adjust screen capture interval to reduce resource consumption
+        grab_interval = 0.033
+        tool_action_space_reduced = False
+        heal_action_space_reduced = False
         for episode in range(self.env.episodes):
-            self.env.reset_marks()  # Reset round status
+            self.env.reset_marks()
             print("Press 'T' to start the screen capture")
             self.env.paused = pause_game(self.env.paused)
 
@@ -153,6 +174,8 @@ class GameController:
             state_obj = GameState(features)
 
             while True:
+                if self.env.paused:
+                    continue
                 self.env.target_step += 1
                 current_time = time.time()
 
@@ -161,19 +184,25 @@ class GameController:
                     screens = self.env.grab_screens()
                     last_grab_time = current_time
 
+                cv2.waitKey(1)
                 # Process screen data and state
                 resized_screens = self.env.resize_screens(screens)
                 state = self.env.merge_states(resized_screens)
-                print(f'Processing time: {time.time() - last_time:.2f}s in episode {episode}')
+                print(f'------------------Processing time: {time.time() - last_time:.2f}s in episode {episode}------------------')
                 last_time = time.time()
 
                 # Action selection: manual or AI
-                if self.tool_manager.tools_exhausted:
-                    self.agent.dqn_agent.action_space = 4  # Restrict action space
+                if self.tool_manager.tools_exhausted and not tool_action_space_reduced:
+                    tool_action_space_reduced = True
+                    self.agent.dqn_agent.action_space -= 3
 
-                action = self.get_manual_action() if self.manual else self.agent.choose_action(state)
+                if self.env.heal_count == 0 and not heal_action_space_reduced:
+                    heal_action_space_reduced = True
+                    self.agent.dqn_agent.action_space -= 1
 
-                if not self.manual and action is not None:
+                action = self.get_manual_action() if self.env.manual else self.agent.choose_action(state)
+
+                if not self.env.manual and action is not None:
                     take_action(action, self.env.debugged, self.tool_manager)
 
                 # Get next state and update
@@ -182,6 +211,14 @@ class GameController:
 
                 # Evaluate reward and done status
                 reward, done = self.action_judge(state_obj)
+
+                if action == 7:
+                    self.env.heal_count -= 1
+                    if state_obj.current['self_hp'] < 50:
+                        reward += 5
+                    else:
+                        reward -= 3
+
                 if action:
                     self.agent.store_transition(state, action, reward, next_state, done)
 
@@ -206,12 +243,25 @@ class GameController:
     def handle_done_state(self, done):
         # Player death
         if done == 1:
-            if not self.manual:
+            if not self.env.manual:
                 restart(self.env.debugged, boss_defeated=False)
-        # Boss defeated
+            else:
+                while True:
+                    screens = self.env.grab_screens()
+                    features = self.env.extract_features(screens)
+                    player_health = features['self_hp']
+                    print(f"Checking for revival, Player Health: {player_health:.2f}%")
+                    if player_health > 5:
+                        print("Player has revived!")
+                        break
+        # Boss death
         elif done == 2:
-            if not self.manual:
+            if not self.env.manual:
                 restart(self.env.debugged, boss_defeated=True)
+            else:
+                print(f"The boss is dead and you can press the T if you are ready for the next boss")
+                self.env.paused = True
+                self.env.paused = pause_game(self.env.paused)
 
     @staticmethod
     def get_manual_action():
@@ -235,7 +285,7 @@ class GameController:
     def post_episode_updates(self, episode):
         if episode % 10 == 0 and not self.env.debugged:
             self.agent.update_target_network()
-        if episode % 20 == 0 and not self.env.debugged:
+        if episode % 5 == 0 and not self.env.debugged:
             self.agent.save_model(episode)
 
 

@@ -106,11 +106,15 @@ def attack():
 
 
 def jump():
-    perform_action('SPACE', 0.12)
+    perform_action('SPACE', 0.1)
 
 
 def tiptoe():
-    perform_action("E", 0.12)
+    perform_action("E", 0.1)
+
+
+def heal():
+    perform_action("1", 0.1)
 
 
 def lock_vision():
@@ -125,6 +129,18 @@ def backward_dodge():
     press_key(KEY_CODES['S'], 0.01)
     tiptoe()
     release_key(KEY_CODES['S'])
+
+
+def left_dodge():
+    press_key(KEY_CODES['A'], 0.01)
+    tiptoe()
+    release_key(KEY_CODES['A'])
+
+
+def right_dodge():
+    press_key(KEY_CODES['D'], 0.01)
+    tiptoe()
+    release_key(KEY_CODES['D'])
 
 
 keyList = ["\b"]

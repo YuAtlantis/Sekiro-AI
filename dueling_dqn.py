@@ -31,7 +31,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class DuelingDQN(nn.Module):
     def __init__(self, input_channels, action_space):
         super(DuelingDQN, self).__init__()
-        self.action_dim = action_space
+        self.action_space = action_space
 
         # Using ResNet for feature extraction
         self.feature_extractor = models.resnet152(pretrained=True)
@@ -69,7 +69,7 @@ class DuelingDQN(nn.Module):
 class DQNAgent:
     def __init__(self, input_channels, action_space, model_file):
         self.state_dim = input_channels
-        self.action_dim = action_space
+        self.action_space = action_space
 
         # Experience replay buffer
         self.replay_buffer = deque(maxlen=REPLAY_SIZE)
@@ -106,7 +106,7 @@ class DQNAgent:
 
     def choose_action(self, state):
         if random.random() <= self.epsilon:
-            action = random.randint(0, self.action_dim - 1)
+            action = random.randint(0, self.action_space - 1)
         else:
             # Greedy action
             state = torch.FloatTensor(state).unsqueeze(0).to(device)  # Move state to device
