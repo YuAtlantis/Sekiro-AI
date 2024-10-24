@@ -8,7 +8,7 @@ from dueling_dqn_manual import start_listeners, keyboard_result, mouse_result
 from dueling_dqn import DQNAgent, SMALL_BATCH_SIZE
 from tool_manager import ToolManager
 from game_control import take_action, pause_game, restart
-from grab_screen import grab, extract_self_and_boss_blood, extract_posture_bar
+from grab_screen import grab, extract_self_and_boss_blood, extract_posture_bar, get_remaining_uses
 
 logging.basicConfig(level=logging.INFO)
 
@@ -22,7 +22,8 @@ class GameEnvironment:
             'self_blood': (58, 562, 398, 575),
             'boss_blood': (58, 92, 290, 108),
             'self_posture': (395, 535, 635, 552),
-            'boss_posture': (315, 73, 710, 88)
+            'boss_posture': (315, 73, 710, 88),
+            'remaining_uses': (955, 570, 972, 588)
         }
         self.paused = True
         self.manual = False
@@ -37,9 +38,12 @@ class GameEnvironment:
         self.heal_cooldown = 0
         self.heal_count = 9
         self.action_space_size = 9
+        self.current_remaining_uses = 19
 
     def grab_screens(self):
-        return {key: grab(window) for key, window in self.windows.items()}
+        screens = {key: grab(window) for key, window in self.windows.items()}
+        screens.pop('remaining_uses', None)
+        return screens
 
     @staticmethod
     def extract_features(screens):
@@ -82,6 +86,12 @@ class GameEnvironment:
     def set_tool_manager(self, tool_manager):
         self.tool_manager = tool_manager
 
+    def update_remaining_uses(self):
+        extracted_text = get_remaining_uses(self.windows['remaining_uses'], self.current_remaining_uses)
+        self.current_remaining_uses = int(extracted_text)
+        if hasattr(self.tool_manager, 'remaining_uses'):
+            self.tool_manager.remaining_uses = self.current_remaining_uses
+
 
 class GameAgent:
     def __init__(self, input_channels=12, action_space=9, model_file="./models"):
@@ -122,7 +132,7 @@ class GameController:
         self.agent = GameAgent()
 
     def action_judge(self, state):
-        if state.next['self_hp'] < 2:
+        if state.next['self_hp'] < 3:
             if not self.env.is_dead:
                 reward, done = -12, 1
                 self.total_reward += reward
@@ -192,15 +202,9 @@ class GameController:
                     time.sleep(0.1)
                     continue
                 self.env.target_step += 1
-
-                # Control screen capture frequency to optimize performance
-                # current_time = time.time()
-                # grab_interval = 0.02
-                # if current_time - last_grab_time >= grab_interval:
-                #     screens = self.env.grab_screens()
-                #     last_grab_time = current_time
-
+                self.env.update_remaining_uses()
                 cv2.waitKey(1)
+
                 # Process screen data and state
                 resized_screens = self.env.resize_screens(screens)
                 state = self.env.merge_states(resized_screens)
@@ -221,7 +225,6 @@ class GameController:
 
                 if not self.env.manual and action is not None:
                     take_action(action, self.env.debugged, self.tool_manager)
-                    time.sleep(0.5)
                     screens = self.env.grab_screens()
 
                 # Get next state and update

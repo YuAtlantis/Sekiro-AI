@@ -50,7 +50,7 @@ def left_click():
 
 def right_click():
     mouse_action(MOUSE_CODES['RIGHT_CLICK'])
-    time.sleep(0.1)
+    time.sleep(0.05)
     mouse_action(MOUSE_CODES['RIGHT_RELEASE'])
 
 

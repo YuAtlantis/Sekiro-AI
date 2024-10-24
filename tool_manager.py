@@ -31,8 +31,6 @@ class ToolManager:
             if self.remaining_uses >= usage_cost:
                 perform_action("3", 0.2)
                 print(f"Using {self.tools[self.current_tool_index]}.")
-                self.remaining_uses -= usage_cost
-                print(f"Remaining uses for tools: {self.remaining_uses}")
 
             else:
                 print(f"Not enough uses left for {self.tools[self.current_tool_index]}.")

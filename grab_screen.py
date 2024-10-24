@@ -5,6 +5,7 @@ import win32con
 import win32gui
 import win32ui
 import logging
+import pytesseract
 
 logging.basicConfig(level=logging.INFO)
 
@@ -154,3 +155,44 @@ def extract_posture_bar(self_screen, boss_screen):
     cv2.moveWindow('Boss Posture Bar', 100, 780)
 
     return self_posture_percentage, boss_posture_percentage
+
+
+def get_remaining_uses(region, current_remaining_uses):
+    # Grab the screen region
+    screenshot = grab(region)
+
+    # Convert to grayscale
+    gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+
+    # Binarize the image
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Extract text using OCR
+    config = "--psm 7"
+    extracted_text = pytesseract.image_to_string(binary, config=config, lang='eng').strip()
+
+    # Error handling to ensure extracted text is a valid number
+    try:
+        remaining_uses = int(extracted_text)
+        # If successfully extracted, update the remaining uses
+        current_remaining_uses = remaining_uses
+    except ValueError:
+        pass
+        # Do not change current_remaining_uses if extraction fails
+
+    # Display the original screenshot and processed image, adjusted to fit the window size
+    cv2.namedWindow('Original Image', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Original Image', screenshot.shape[1], screenshot.shape[0])
+    cv2.moveWindow('Original Image', 550, 535)
+    cv2.imshow('Original Image', screenshot)
+
+    cv2.namedWindow('Processed Image', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Processed Image', binary.shape[1], binary.shape[0])
+    cv2.moveWindow('Processed Image', 550, 755)
+    cv2.imshow('Processed Image', binary)
+
+    # Return the updated current_remaining_uses
+    return current_remaining_uses
+
+
+
