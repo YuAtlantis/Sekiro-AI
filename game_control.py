@@ -1,6 +1,5 @@
 import time
 import input_keys
-from threading import Lock
 
 
 def take_action(action_index, debugged, tool_manager):
@@ -29,23 +28,17 @@ def wait_before_start(seconds, paused):
     print("Game paused." if paused else "Game started.")
 
 
-def restart(debugged, boss_defeated=False):
+def restart(debugged):
     if not debugged:
-        if boss_defeated:
-            print("-------------------------Boss is defeated and training is finished-------------------------")
-            return
-        else:
-            print(
-                "-------------------------You are dead and we are restarting a new round-------------------------")
-
+        print("-------------------------You are dead and we are restarting a new round-------------------------")
         input_keys.clear_action_state()  # Clear the current input state
-        time.sleep(5)  # Wait for a period of time
+        print("-------------------------Waiting for 8 seconds before lock vision-------------------------")
+        time.sleep(8)  # Wait for a period of time
         input_keys.lock_vision()  # Lock the vision
+        print("-------------------------Waiting for 2 seconds for locking vision-------------------------")
         time.sleep(2)  # Wait for the vision to lock
+        print("-------------------------Restart the fighting now by left click mouse-------------------------")
         input_keys.attack()  # Simulate an attack action to restart the game
-
-        if not boss_defeated:
-            print("-------------------------A new round has already been started-------------------------")
 
 
 def pause_game(paused):

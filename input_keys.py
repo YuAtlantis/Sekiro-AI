@@ -56,7 +56,7 @@ def right_click():
 
 def middle_click():
     mouse_action(MOUSE_CODES['MIDDLE_CLICK'])
-    time.sleep(0.05)
+    time.sleep(0.1)
     mouse_action(MOUSE_CODES['MIDDLE_RELEASE'])
 
 

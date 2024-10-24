@@ -28,10 +28,6 @@ class GameEnvironment:
         self.paused = True
         self.manual = False
         self.debugged = False
-        self.is_dead = False
-        self.boss_has_extra_life = True
-        self.boss_phase1_complete = False
-        self.boss_phase2_complete = False
         self.tool_manager = None
         self.self_stop_mark = 0
         self.target_step = 0
@@ -70,10 +66,6 @@ class GameEnvironment:
     def reset_marks(self):
         self.self_stop_mark = 0
         self.target_step = 0
-        self.is_dead = False
-        self.boss_has_extra_life = True
-        self.boss_phase1_complete = False
-        self.boss_phase2_complete = False
 
     def get_action_mask(self):
         action_mask = [1] * self.action_space_size
@@ -133,28 +125,15 @@ class GameController:
 
     def action_judge(self, state):
         if state.next['self_hp'] < 3:
-            if not self.env.is_dead:
-                reward, done = -12, 1
-                self.total_reward += reward
-                self.env.is_dead = True
-                self.env.reset_marks()
-                print(f'You are dead and get the reward: {reward:.2f}')
-            else:
-                reward, done = 0, 1
+            reward, done = -12, 1
+            print(f'You are dead and get the reward: {reward:.2f}')
+            self.total_reward += reward
+
         elif state.next['boss_hp'] < 3:
-            if self.env.boss_has_extra_life and not self.env.boss_phase1_complete:
-                self.env.boss_has_extra_life = False
-                reward, done = 40, 0
-                print(f'You beat the first phase of the boss! Reward: {reward:.2f}')
-                self.env.boss_phase1_complete = True
-            elif not self.env.boss_has_extra_life and not self.env.boss_phase2_complete:
-                reward, done = 40, 2
-                self.env.reset_marks()
-                self.total_reward += reward
-                print(f'You finally beat the boss and get the reward: {reward:.2f}')
-                self.env.boss_phase2_complete = True
-            else:
-                reward, done = 0, 0
+            reward, done = 40, 1
+            print(f'You beat the current boss and get the reward: {reward:.2f}')
+            self.total_reward += reward
+
         else:
             deltas = {key: state.next[key] - state.current[key] for key in state.current}
             reward = self.calculate_reward(deltas)
@@ -183,8 +162,8 @@ class GameController:
         return reward
 
     def run(self):
-        if self.env.manual:
-            start_listeners()
+        # if self.env.manual:
+        #     start_listeners()
         for episode in range(self.env.episodes):
             self.env.reset_marks()
             print("Press 'T' to start the screen capture")
@@ -198,9 +177,6 @@ class GameController:
             state_obj = GameState(features)
 
             while True:
-                if self.env.paused:
-                    time.sleep(0.1)
-                    continue
                 self.env.target_step += 1
                 self.env.update_remaining_uses()
                 cv2.waitKey(1)
@@ -208,8 +184,10 @@ class GameController:
                 # Process screen data and state
                 resized_screens = self.env.resize_screens(screens)
                 state = self.env.merge_states(resized_screens)
+
                 if self.env.target_step % 10 == 0:
                     logging.info(f'Processing time: {time.time() - last_time:.2f}s in episode {episode}')
+
                 last_time = time.time()
 
                 if self.env.heal_cooldown > 0:
@@ -217,7 +195,6 @@ class GameController:
 
                 action_mask = self.env.get_action_mask()
 
-                # Action selection: manual or AI
                 if self.env.manual:
                     action = self.get_manual_action()
                 else:
@@ -225,8 +202,8 @@ class GameController:
 
                 if not self.env.manual and action is not None:
                     take_action(action, self.env.debugged, self.tool_manager)
-                    screens = self.env.grab_screens()
 
+                screens = self.env.grab_screens()
                 # Get next state and update
                 next_features, next_state = self.get_next_state(screens)
                 state_obj.update(next_features)
@@ -245,13 +222,10 @@ class GameController:
                 if action is not None:
                     self.agent.store_transition(state, action, reward, next_state, done)
 
-                # Train regularly
                 if self.env.target_step % self.agent.TRAIN_BATCH_SIZE == 0:
                     self.agent.train(episode)
 
-                # Handle game logic based on done status
                 if done:
-                    self.handle_done_state(done)
                     break
 
                 # Pause control
@@ -260,31 +234,9 @@ class GameController:
 
             # Update and restart logic after each episode
             self.post_episode_updates(episode)
+            restart(self.env.debugged)
 
         cv2.destroyAllWindows()
-
-    def handle_done_state(self, done):
-        # Player death
-        if done == 1:
-            if not self.env.manual:
-                restart(self.env.debugged, boss_defeated=False)
-            else:
-                while True:
-                    screens = self.env.grab_screens()
-                    features = self.env.extract_features(screens)
-                    player_health = features['self_hp']
-                    print(f"Checking for revival, Player Health: {player_health:.2f}%")
-                    if player_health > 5:
-                        print("Player has revived!")
-                        break
-        # Boss death
-        elif done == 2:
-            if not self.env.manual:
-                restart(self.env.debugged, boss_defeated=True)
-            else:
-                print(f"The boss is dead and you can press the T if you are ready for the next boss")
-                self.env.paused = True
-                self.env.paused = pause_game(self.env.paused)
 
     @staticmethod
     def get_manual_action():
