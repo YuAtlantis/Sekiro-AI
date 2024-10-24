@@ -9,7 +9,7 @@ class ToolManager:
         self.tools_exhausted = False
 
     def change_tool(self):
-        perform_action("Z", 0.3)
+        perform_action("Z", 0.1)
         self.current_tool_index = (self.current_tool_index + 1) % len(self.tools)
         print(f"Changed to {self.tools[self.current_tool_index]}.")
 
@@ -29,7 +29,7 @@ class ToolManager:
                 usage_cost = 3
 
             if self.remaining_uses >= usage_cost:
-                perform_action("3", 0.1)
+                perform_action("3", 0.2)
                 print(f"Using {self.tools[self.current_tool_index]}.")
                 self.remaining_uses -= usage_cost
                 print(f"Remaining uses for tools: {self.remaining_uses}")

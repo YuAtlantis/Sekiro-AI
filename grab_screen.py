@@ -1,11 +1,12 @@
-import time
-
 import cv2
 import numpy as np
 import win32api
 import win32con
 import win32gui
 import win32ui
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 
 # Use Windows API to capture the screen
@@ -74,24 +75,18 @@ def extract_self_and_boss_blood(self_screen, boss_screen):
     MAX_SELF_RED_PIXELS = 2300
     MAX_BOSS_RED_PIXELS = 630
 
-    # This will store the previous health values if they exist
-    if not hasattr(extract_self_and_boss_blood, 'last_self_health'):
-        extract_self_and_boss_blood.last_self_health = None
-    if not hasattr(extract_self_and_boss_blood, 'last_boss_health'):
-        extract_self_and_boss_blood.last_boss_health = None
-
     def calculate_health(screen, max_red_pixels, baseline_attr_name):
         current_red = count_red_pixels(screen)
 
         # Initialize or update the baseline red pixel count
-        if not hasattr(extract_self_and_boss_blood, baseline_attr_name):
-            setattr(extract_self_and_boss_blood, baseline_attr_name, current_red)
+        if not hasattr(calculate_health, baseline_attr_name):
+            setattr(calculate_health, baseline_attr_name, current_red)
         else:
-            baseline_red = getattr(extract_self_and_boss_blood, baseline_attr_name)
-            setattr(extract_self_and_boss_blood, baseline_attr_name, max(baseline_red, current_red))
+            baseline_red = getattr(calculate_health, baseline_attr_name)
+            setattr(calculate_health, baseline_attr_name, max(baseline_red, current_red))
 
         # Cap the baseline red pixel count to the predefined maximum
-        baseline_red = min(getattr(extract_self_and_boss_blood, baseline_attr_name), max_red_pixels)
+        baseline_red = min(getattr(calculate_health, baseline_attr_name), max_red_pixels)
 
         # Calculate the health percentage relative to the baseline
         if baseline_red > 0:
@@ -104,16 +99,9 @@ def extract_self_and_boss_blood(self_screen, boss_screen):
     self_health_percentage = calculate_health(self_screen, MAX_SELF_RED_PIXELS, "self_baseline_red")
     boss_health_percentage = calculate_health(boss_screen, MAX_BOSS_RED_PIXELS, "boss_baseline_red")
 
-    # Only print health info if it changed from the last recorded values
-    if (self_health_percentage != extract_self_and_boss_blood.last_self_health or
-            boss_health_percentage != extract_self_and_boss_blood.last_boss_health):
-        print(f'Player Health: {self_health_percentage:.2f}%, Boss Health: {boss_health_percentage:.2f}%')
+    logging.info(f'Player Health: {self_health_percentage:.2f}%, Boss Health: {boss_health_percentage:.2f}%')
 
-    # Update the last health values to the current ones
-    extract_self_and_boss_blood.last_self_health = self_health_percentage
-    extract_self_and_boss_blood.last_boss_health = boss_health_percentage
-
-    # Display the health bar images for debugging
+    # Display the health bar images for debugging if needed
     cv2.imshow('Player Health Bar', self_screen)
     cv2.moveWindow('Player Health Bar', 100, 570)
     cv2.imshow('Boss Health Bar', boss_screen)
@@ -126,12 +114,6 @@ def extract_posture_bar(self_screen, boss_screen):
     # Define the HSV range for detecting the posture bar color
     LOWER_COLOR = np.array([0, 100, 100])
     UPPER_COLOR = np.array([30, 255, 255])
-
-    # Initialize or check previous posture percentages
-    if not hasattr(extract_posture_bar, 'last_self_posture'):
-        extract_posture_bar.last_self_posture = None
-    if not hasattr(extract_posture_bar, 'last_boss_posture'):
-        extract_posture_bar.last_boss_posture = None
 
     # Function to calculate posture for a given screen
     def calculate_posture_percentage(screen):
@@ -163,20 +145,12 @@ def extract_posture_bar(self_screen, boss_screen):
     self_posture_percentage = calculate_posture_percentage(self_screen)
     boss_posture_percentage = calculate_posture_percentage(boss_screen)
 
-    # Only print posture info if it has changed since the last calculation
-    if (self_posture_percentage != extract_posture_bar.last_self_posture or
-            boss_posture_percentage != extract_posture_bar.last_boss_posture):
-        print(f'Player Posture: {self_posture_percentage:.2f}%, Boss Posture: {boss_posture_percentage:.2f}%')
+    logging.info(f'Player Posture: {self_posture_percentage:.2f}%, Boss Posture: {boss_posture_percentage:.2f}%')
 
-    # Update the last posture percentages
-    extract_posture_bar.last_self_posture = self_posture_percentage
-    extract_posture_bar.last_boss_posture = boss_posture_percentage
-
-    # Display the posture bar images for debugging
+    # Display the posture bar images for debugging if needed
     cv2.imshow('Player Posture Bar', self_screen)
     cv2.moveWindow('Player Posture Bar', 100, 710)
     cv2.imshow('Boss Posture Bar', boss_screen)
     cv2.moveWindow('Boss Posture Bar', 100, 780)
 
     return self_posture_percentage, boss_posture_percentage
-

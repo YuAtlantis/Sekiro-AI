@@ -1,13 +1,16 @@
 import cv2
 import time
 import torch
+import logging
 import torch.nn.functional as F
 import numpy as np
-import dueling_dqn_manual
+from dueling_dqn_manual import start_listeners, keyboard_result, mouse_result
 from dueling_dqn import DQNAgent, SMALL_BATCH_SIZE
 from tool_manager import ToolManager
 from game_control import take_action, pause_game, restart
 from grab_screen import grab, extract_self_and_boss_blood, extract_posture_bar
+
+logging.basicConfig(level=logging.INFO)
 
 
 class GameEnvironment:
@@ -28,10 +31,12 @@ class GameEnvironment:
         self.boss_has_extra_life = True
         self.boss_phase1_complete = False
         self.boss_phase2_complete = False
+        self.tool_manager = None
         self.self_stop_mark = 0
-        self.boss_stop_mark = 0
         self.target_step = 0
+        self.heal_cooldown = 0
         self.heal_count = 9
+        self.action_space_size = 9
 
     def grab_screens(self):
         return {key: grab(window) for key, window in self.windows.items()}
@@ -60,9 +65,22 @@ class GameEnvironment:
 
     def reset_marks(self):
         self.self_stop_mark = 0
-        self.boss_stop_mark = 0
         self.target_step = 0
         self.is_dead = False
+        self.boss_has_extra_life = True
+        self.boss_phase1_complete = False
+        self.boss_phase2_complete = False
+
+    def get_action_mask(self):
+        action_mask = [1] * self.action_space_size
+        if self.tool_manager.tools_exhausted:
+            action_mask[6] = action_mask[7] = action_mask[8] = 0
+        if self.heal_count == 0 or self.heal_cooldown > 0:
+            action_mask[5] = 0
+        return action_mask
+
+    def set_tool_manager(self, tool_manager):
+        self.tool_manager = tool_manager
 
 
 class GameAgent:
@@ -70,8 +88,8 @@ class GameAgent:
         self.dqn_agent = DQNAgent(input_channels, action_space, model_file)
         self.TRAIN_BATCH_SIZE = SMALL_BATCH_SIZE
 
-    def choose_action(self, state):
-        return self.dqn_agent.choose_action(state)
+    def choose_action(self, state, action_mask):
+        return self.dqn_agent.choose_action(state, action_mask)
 
     def store_transition(self, *args):
         self.dqn_agent.store_transition(*args)
@@ -99,14 +117,14 @@ class GameController:
     def __init__(self):
         self.total_reward = 0
         self.env = GameEnvironment()
-        self.agent = GameAgent()
         self.tool_manager = ToolManager()
-        dueling_dqn_manual.start_listeners()
+        self.env.set_tool_manager(self.tool_manager)
+        self.agent = GameAgent()
 
     def action_judge(self, state):
         if state.next['self_hp'] < 2:
             if not self.env.is_dead:
-                reward, done = -10, 1
+                reward, done = -12, 1
                 self.total_reward += reward
                 self.env.is_dead = True
                 self.env.reset_marks()
@@ -116,7 +134,7 @@ class GameController:
         elif state.next['boss_hp'] < 3:
             if self.env.boss_has_extra_life and not self.env.boss_phase1_complete:
                 self.env.boss_has_extra_life = False
-                reward, done = 30, 0
+                reward, done = 40, 0
                 print(f'You beat the first phase of the boss! Reward: {reward:.2f}')
                 self.env.boss_phase1_complete = True
             elif not self.env.boss_has_extra_life and not self.env.boss_phase2_complete:
@@ -143,11 +161,8 @@ class GameController:
         else:
             self.env.self_stop_mark = 0
 
-        if deltas['boss_hp'] <= -3 and self.env.boss_stop_mark == 0:
-            reward += 15
-            self.env.boss_stop_mark = 1
-        else:
-            self.env.boss_stop_mark = 0
+        if deltas['boss_hp'] <= -3:
+            reward += 12
 
         if deltas['self_posture'] > 8:
             reward -= 2
@@ -158,9 +173,8 @@ class GameController:
         return reward
 
     def run(self):
-        grab_interval = 0.033
-        tool_action_space_reduced = False
-        heal_action_space_reduced = False
+        if self.env.manual:
+            start_listeners()
         for episode in range(self.env.episodes):
             self.env.reset_marks()
             print("Press 'T' to start the screen capture")
@@ -175,35 +189,40 @@ class GameController:
 
             while True:
                 if self.env.paused:
+                    time.sleep(0.1)
                     continue
                 self.env.target_step += 1
-                current_time = time.time()
 
                 # Control screen capture frequency to optimize performance
-                if current_time - last_grab_time >= grab_interval:
-                    screens = self.env.grab_screens()
-                    last_grab_time = current_time
+                # current_time = time.time()
+                # grab_interval = 0.02
+                # if current_time - last_grab_time >= grab_interval:
+                #     screens = self.env.grab_screens()
+                #     last_grab_time = current_time
 
                 cv2.waitKey(1)
                 # Process screen data and state
                 resized_screens = self.env.resize_screens(screens)
                 state = self.env.merge_states(resized_screens)
-                print(f'------------------Processing time: {time.time() - last_time:.2f}s in episode {episode}------------------')
+                if self.env.target_step % 10 == 0:
+                    logging.info(f'Processing time: {time.time() - last_time:.2f}s in episode {episode}')
                 last_time = time.time()
 
+                if self.env.heal_cooldown > 0:
+                    self.env.heal_cooldown -= 1
+
+                action_mask = self.env.get_action_mask()
+
                 # Action selection: manual or AI
-                if self.tool_manager.tools_exhausted and not tool_action_space_reduced:
-                    tool_action_space_reduced = True
-                    self.agent.dqn_agent.action_space -= 3
-
-                if self.env.heal_count == 0 and not heal_action_space_reduced:
-                    heal_action_space_reduced = True
-                    self.agent.dqn_agent.action_space -= 1
-
-                action = self.get_manual_action() if self.env.manual else self.agent.choose_action(state)
+                if self.env.manual:
+                    action = self.get_manual_action()
+                else:
+                    action = self.agent.choose_action(state, action_mask)
 
                 if not self.env.manual and action is not None:
                     take_action(action, self.env.debugged, self.tool_manager)
+                    time.sleep(0.5)
+                    screens = self.env.grab_screens()
 
                 # Get next state and update
                 next_features, next_state = self.get_next_state(screens)
@@ -212,14 +231,15 @@ class GameController:
                 # Evaluate reward and done status
                 reward, done = self.action_judge(state_obj)
 
-                if action == 7:
+                if action == 5:
                     self.env.heal_count -= 1
+                    self.env.heal_cooldown = 5
                     if state_obj.current['self_hp'] < 50:
                         reward += 5
                     else:
-                        reward -= 3
+                        reward -= 10
 
-                if action:
+                if action is not None:
                     self.agent.store_transition(state, action, reward, next_state, done)
 
                 # Train regularly
@@ -265,15 +285,13 @@ class GameController:
 
     @staticmethod
     def get_manual_action():
-        if dueling_dqn_manual.keyboard_result is not None:
-            action = dueling_dqn_manual.keyboard_result
+        if keyboard_result is not None:
+            action = keyboard_result
             print(f'Keyboard action detected: {action}')
-            dueling_dqn_manual.keyboard_result = None
             return action
-        elif dueling_dqn_manual.mouse_result is not None:
-            action = dueling_dqn_manual.mouse_result
+        elif mouse_result is not None:
+            action = mouse_result
             print(f'Mouse action detected: {action}')
-            dueling_dqn_manual.mouse_result = None
             return action
 
     def get_next_state(self, screens):
@@ -285,7 +303,7 @@ class GameController:
     def post_episode_updates(self, episode):
         if episode % 10 == 0 and not self.env.debugged:
             self.agent.update_target_network()
-        if episode % 5 == 0 and not self.env.debugged:
+        if episode % 10 == 0 and not self.env.debugged:
             self.agent.save_model(episode)
 
 

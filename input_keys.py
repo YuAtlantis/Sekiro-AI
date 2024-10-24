@@ -50,7 +50,7 @@ def left_click():
 
 def right_click():
     mouse_action(MOUSE_CODES['RIGHT_CLICK'])
-    time.sleep(0.05)
+    time.sleep(0.1)
     mouse_action(MOUSE_CODES['RIGHT_RELEASE'])
 
 
@@ -114,7 +114,7 @@ def tiptoe():
 
 
 def heal():
-    perform_action("1", 0.1)
+    perform_action("1", 0.05)
 
 
 def lock_vision():
@@ -126,19 +126,19 @@ def press_esc():
 
 
 def backward_dodge():
-    press_key(KEY_CODES['S'], 0.01)
+    press_key(KEY_CODES['S'], 0.3)
     tiptoe()
     release_key(KEY_CODES['S'])
 
 
 def left_dodge():
-    press_key(KEY_CODES['A'], 0.01)
+    press_key(KEY_CODES['A'], 0.3)
     tiptoe()
     release_key(KEY_CODES['A'])
 
 
 def right_dodge():
-    press_key(KEY_CODES['D'], 0.01)
+    press_key(KEY_CODES['D'], 0.3)
     tiptoe()
     release_key(KEY_CODES['D'])
 

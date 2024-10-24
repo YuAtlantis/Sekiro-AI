@@ -104,19 +104,30 @@ class DQNAgent:
     def update_target_network(self):
         self.target_net.load_state_dict(self.eval_net.state_dict())
 
-    def choose_action(self, state):
+    def choose_action(self, state, action_mask):
         if random.random() <= self.epsilon:
-            action = random.randint(0, self.action_space - 1)
+            # Randomly select an available action
+            valid_actions = [i for i, valid in enumerate(action_mask) if valid]
+            action = random.choice(valid_actions)
         else:
-            # Greedy action
-            state = torch.FloatTensor(state).unsqueeze(0).to(device)  # Move state to device
-            if len(state.shape) == 4:  # Ensure input is 4D (batch, channels, height, width)
-                q_values = self.eval_net(state)
-                action = torch.argmax(q_values, dim=1).item()
+            # Greedy selection
+            state = torch.FloatTensor(state).unsqueeze(0).to(device)  # Move the state to the device
+            if len(state.shape) == 4:  # Ensure the input is 4-dimensional (batch, channels, height, width)
+                q_values = self.eval_net(state)  # Get Q values
+                q_values = q_values.squeeze(0)  # Remove the batch dimension, shape becomes (action_space_size,)
+
+                # Convert the action mask to Tensor and move it to the device
+                action_mask_tensor = torch.FloatTensor(action_mask).to(device)
+
+                # Set the Q values of unavailable actions to a very small number
+                masked_q_values = q_values * action_mask_tensor + (1 - action_mask_tensor) * (-1e9)
+
+                # Select the action with the highest Q value
+                action = torch.argmax(masked_q_values).item()
             else:
                 raise ValueError("State input must have 4 dimensions: [batch, channels, height, width]")
         # Update epsilon
-        self.epsilon = max(FINAL_EPSILON, self.epsilon - (INITIAL_EPSILON - FINAL_EPSILON) / 1000)
+        self.epsilon = max(FINAL_EPSILON, self.epsilon - (INITIAL_EPSILON - FINAL_EPSILON) / 5000)
         return action
 
     def store_transition(self, state, action, reward, next_state, done):
