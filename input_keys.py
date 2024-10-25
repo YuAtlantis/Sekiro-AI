@@ -162,4 +162,8 @@ def clear_action_state():
 
     for action_name, action_code in MOUSE_CODES.items():
         if "CLICK" in action_name:
-            mouse_action(action_code)
+            release_action_name = action_name.replace("CLICK", "RELEASE")
+            if release_action_name in MOUSE_CODES:
+                release_action_code = MOUSE_CODES[release_action_name]
+                mouse_action(release_action_code)
+
