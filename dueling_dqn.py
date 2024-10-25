@@ -8,7 +8,6 @@ import torch.nn.utils as utils
 import torch.nn.functional as functional
 from collections import deque
 from torchvision import models
-# tensorboard --logdir=logs
 from torch.utils.tensorboard import SummaryWriter
 
 # Experience replay buffer size
@@ -54,79 +53,77 @@ class DuelingDQN(nn.Module):
 
     def forward(self, x):
         x = self.feature_extractor(x)
-
-        # State value stream
         v = self.value_stream(x)
-
-        # Advantage stream
         a = self.advantage_stream(x)
-
-        # Combine streams to get Q value
         q = v + (a - a.mean(dim=1, keepdim=True))
         return q
 
 
 class DQNAgent:
     def __init__(self, input_channels, action_space, model_file):
+        self.global_step = 0
         self.state_dim = input_channels
         self.action_space = action_space
-
-        # Experience replay buffer
         self.replay_buffer = deque(maxlen=REPLAY_SIZE)
-
-        # Initialize networks
         self.eval_net = DuelingDQN(input_channels, action_space).to(device)
         self.target_net = DuelingDQN(input_channels, action_space).to(device)
         self.update_target_network()
-
-        # Optimizer
         self.optimizer = optim.Adam(self.eval_net.parameters(), lr=LR)
-
-        # Epsilon for epsilon-greedy policy
         self.epsilon = INITIAL_EPSILON
         self.model_file = model_file
-        self.writer = SummaryWriter(log_dir='./logs')
+        self.writer = SummaryWriter(log_dir='./logs', purge_step=self.global_step)
 
-        if os.path.exists(self.model_file):
-            if os.path.isdir(self.model_file):
-                files = [f for f in os.listdir(self.model_file) if f.endswith('.pth')]
-                if files:
-                    files.sort(key=lambda x: os.path.getmtime(os.path.join(self.model_file, x)), reverse=True)
-                    model_path = os.path.join(self.model_file, files[0])
-                    print(f"Loading model from {model_path}...\n")
-                    self.eval_net.load_state_dict(torch.load(model_path))
+        # Load checkpoint or model
+        self.load_checkpoint_or_model()
+
+    def load_checkpoint_or_model(self):
+        checkpoint_dir = os.path.join(self.model_file)
+        if os.path.exists(checkpoint_dir) and os.path.isdir(checkpoint_dir):
+            checkpoints = [f for f in os.listdir(checkpoint_dir) if
+                           f.startswith("checkpoint_step_") and f.endswith('.pth')]
+            if checkpoints:
+                checkpoints.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)), reverse=True)
+                checkpoint_path = os.path.join(checkpoint_dir, checkpoints[0])
+                print(f"Loading checkpoint from {checkpoint_path}...\n")
+                self.eval_net.load_state_dict(torch.load(checkpoint_path))
+
+                step_path = os.path.join(self.model_file, "last_step.txt")
+                if os.path.exists(step_path):
+                    with open(step_path, "r") as f:
+                        self.global_step = int(f.read().strip())
                 else:
-                    print("No model files found in the folder.\n")
+                    self.global_step = 0
             else:
-                print("Model exists, loading model...\n")
-                self.eval_net.load_state_dict(torch.load(self.model_file))
+                print("No checkpoints found. Trying to load existing model...\n")
+                self.load_model()
+        else:
+            print("No checkpoint directory found. Trying to load existing model...\n")
+            self.load_model()
+            self.global_step = 0  # 新训练的步数从0开始
+
+    def load_model(self):
+        if os.path.exists(self.model_file) and not os.path.isdir(self.model_file):
+            print("Loading model...\n")
+            self.eval_net.load_state_dict(torch.load(self.model_file))
+        else:
+            print("No model file found. Starting from scratch.\n")
 
     def update_target_network(self):
         self.target_net.load_state_dict(self.eval_net.state_dict())
 
     def choose_action(self, state, action_mask):
         if random.random() <= self.epsilon:
-            # Randomly select an available action
             valid_actions = [i for i, valid in enumerate(action_mask) if valid]
             action = random.choice(valid_actions)
         else:
-            # Greedy selection
-            state = torch.FloatTensor(state).unsqueeze(0).to(device)  # Move the state to the device
-            if len(state.shape) == 4:  # Ensure the input is 4-dimensional (batch, channels, height, width)
-                q_values = self.eval_net(state)  # Get Q values
-                q_values = q_values.squeeze(0)  # Remove the batch dimension, shape becomes (action_space_size,)
-
-                # Convert the action mask to Tensor and move it to the device
+            state = torch.FloatTensor(state).unsqueeze(0).to(device)
+            if len(state.shape) == 4:
+                q_values = self.eval_net(state).squeeze(0)
                 action_mask_tensor = torch.FloatTensor(action_mask).to(device)
-
-                # Set the Q values of unavailable actions to a very small number
                 masked_q_values = q_values * action_mask_tensor + (1 - action_mask_tensor) * (-1e9)
-
-                # Select the action with the highest Q value
                 action = torch.argmax(masked_q_values).item()
             else:
                 raise ValueError("State input must have 4 dimensions: [batch, channels, height, width]")
-        # Update epsilon
         self.epsilon = max(FINAL_EPSILON, self.epsilon - (INITIAL_EPSILON - FINAL_EPSILON) / 5000)
         return action
 
@@ -136,42 +133,51 @@ class DQNAgent:
     def train(self, batch_size, step):
         if len(self.replay_buffer) < batch_size:
             return
-
-        # Sample a minibatch from the replay buffer
         minibatch = random.sample(self.replay_buffer, batch_size)
-
-        # Convert lists of numpy arrays to numpy arrays before converting to tensors
         state_batch = torch.FloatTensor(np.array([data[0] for data in minibatch])).to(device)
         action_batch = torch.LongTensor(np.array([data[1] for data in minibatch])).unsqueeze(1).to(device)
         reward_batch = torch.FloatTensor(np.array([data[2] for data in minibatch])).to(device)
         next_state_batch = torch.FloatTensor(np.array([data[3] for data in minibatch])).to(device)
         done_batch = torch.FloatTensor(np.array([data[4] for data in minibatch])).to(device)
 
-        # Compute current Q values
         q_values = self.eval_net(state_batch).gather(1, action_batch).squeeze(1)
 
-        # Compute target Q values
         with torch.no_grad():
             next_q_values = self.target_net(next_state_batch).max(1)[0]
             target_q_values = reward_batch + (1 - done_batch) * GAMMA * next_q_values
 
-        # Compute loss
         loss = functional.mse_loss(q_values, target_q_values)
 
-        # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
-
-        # Record the gradient norm (to track if gradients are too large or too small)
         total_norm = utils.clip_grad_norm_(self.eval_net.parameters(), max_norm=10)
         self.optimizer.step()
 
-        # Write loss to TensorBoard
-        self.writer.add_scalar('Loss/train', loss.item(), step)
-        self.writer.add_scalar('Epsilon', self.epsilon, step)
-        self.writer.add_scalar('Total reward', torch.sum(reward_batch).item(), step)
-        self.writer.add_scalar('Max Q value', q_values.max().item(), step)
-        self.writer.add_scalar('Gradient norm', total_norm, step)
+        self.writer.add_scalar('Loss/train', loss.item(), self.global_step)
+        self.writer.add_scalar('Epsilon', self.epsilon, self.global_step)
+        self.writer.add_scalar('Total reward', torch.sum(reward_batch).item(), self.global_step)
+        self.writer.add_scalar('Max Q value', q_values.max().item(), self.global_step)
+        self.writer.add_scalar('Gradient norm', total_norm, self.global_step)
+
+        self.save_checkpoint(step)
+
+        self.global_step += 1
+
+    def save_checkpoint(self, step):
+        checkpoint_path = f"./{self.model_file}/checkpoint_step_{step}.pth"
+        torch.save(self.eval_net.state_dict(), checkpoint_path)
+        print(f"Checkpoint saved at step {step} to {checkpoint_path}")
+
+        with open(f"{self.model_file}/last_step.txt", "w") as f:
+            f.write(str(step))
+
+        checkpoint_dir = os.path.join(self.model_file)
+        checkpoints = [f for f in os.listdir(checkpoint_dir) if f.startswith("checkpoint_step_") and f.endswith('.pth')]
+        if len(checkpoints) > 5:
+            checkpoints.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)))
+            oldest_checkpoint = checkpoints[0]
+            os.remove(os.path.join(checkpoint_dir, oldest_checkpoint))
+            print(f"Deleted oldest checkpoint: {oldest_checkpoint}")
 
     def save_model(self, episode):
         filename = f"./{self.model_file}/dueling_dqn_trained_episode_{episode}.pth"

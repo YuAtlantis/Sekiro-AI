@@ -10,15 +10,13 @@ def take_action(action_index, debugged, tool_manager):
         elif action_index == 1:
             input_keys.attack()
         elif action_index == 2:
-            input_keys.jump()
-        elif action_index == 3:
             input_keys.tiptoe()
-        elif action_index == 4:
+        elif action_index == 3:
             input_keys.left_dodge()
-        elif action_index == 5:
+        elif action_index == 4:
             input_keys.heal()
-        elif action_index in [6, 7, 8]:
-            tool_manager.use_specific_tool(action_index - 6)
+        elif action_index in [5, 6, 7]:
+            tool_manager.use_specific_tool(action_index - 5)
 
 
 def wait_before_start(seconds, paused):
@@ -28,17 +26,30 @@ def wait_before_start(seconds, paused):
     print("Game paused." if paused else "Game started.")
 
 
-def restart(debugged):
+def restart(debugged, defeated):
     if not debugged:
-        print("-------------------------You are dead and we are restarting a new round-------------------------")
-        input_keys.clear_action_state()  # Clear the current input state
-        print("-------------------------Waiting for 8 seconds before lock vision-------------------------")
-        time.sleep(8)  # Wait for a period of time
-        input_keys.lock_vision()  # Lock the vision
-        print("-------------------------Waiting for 2 seconds for locking vision-------------------------")
-        time.sleep(2)  # Wait for the vision to lock
-        print("-------------------------Restart the fighting now by left click mouse-------------------------")
-        input_keys.attack()  # Simulate an attack action to restart the game
+        if defeated == 1:
+            print("-------------------------You are dead and we are restarting a new round-------------------------")
+            input_keys.clear_action_state()
+            print("-------------------------Waiting for 8 seconds before lock vision-------------------------")
+            time.sleep(8)
+            print("-------------------------Waiting for 2 seconds for locking vision-------------------------")
+            time.sleep(1)
+            input_keys.lock_vision()
+            time.sleep(1)
+            print("-------------------------Restart the fighting now by left click mouse-------------------------")
+            input_keys.attack()  # Simulate an attack action to restart the game
+
+        elif defeated == 2:
+            time.sleep(2)
+            input_keys.attack()
+            time.sleep(1)
+            input_keys.attack()
+            print("-------------------------You beat the boss and wait for the animation-------------------------")
+            input_keys.clear_action_state()  # Clear the current input state
+            print("-------------------------Waiting for 2 seconds for locking vision-------------------------")
+            time.sleep(2)
+            input_keys.lock_vision()
 
 
 def pause_game(paused):
