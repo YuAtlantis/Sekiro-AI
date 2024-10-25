@@ -1,198 +1,201 @@
 import cv2
 import numpy as np
-import win32api
-import win32con
-import win32gui
-import win32ui
+import mss
 import logging
 import pytesseract
 
 logging.basicConfig(level=logging.INFO)
 
 
-# Use Windows API to capture the screen
-def grab(region):
-    hwin = win32gui.GetDesktopWindow()
-
-    if region:
-        # x, y, x_w, y_h
-        left, top, x2, y2 = region
-        width = x2 - left + 1
-        height = y2 - top + 1
-    else:
-        width = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN)
-        height = win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN)
-        left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
-        top = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
-
-    hwindc = win32gui.GetWindowDC(hwin)
-    srcdc = win32ui.CreateDCFromHandle(hwindc)
-    memdc = srcdc.CreateCompatibleDC()
-    bmp = win32ui.CreateBitmap()
-    bmp.CreateCompatibleBitmap(srcdc, width, height)
-    memdc.SelectObject(bmp)
-    memdc.BitBlt((0, 0), (width, height), srcdc, (left, top), win32con.SRCCOPY)
-
-    signedIntsArray = bmp.GetBitmapBits(True)
-    img = np.frombuffer(signedIntsArray, dtype='uint8')
-    img.shape = (height, width, 4)
-
-    srcdc.DeleteDC()
-    memdc.DeleteDC()
-    win32gui.ReleaseDC(hwin, hwindc)
-    win32gui.DeleteObject(bmp.GetHandle())
-
-    return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+# Capture the full screen using mss
+def grab_full_screen(region=(0, 0, 1024, 620)):
+    # Capture the entire screen
+    with mss.mss() as sct:
+        monitor = {
+            "top": region[1],
+            "left": region[0],
+            "width": region[2] - region[0],
+            "height": region[3] - region[1]
+        }
+        sct_img = sct.grab(monitor)
+        img = np.array(sct_img)
+        return img[:, :, :3]
 
 
-# Calculate the number of red pixels in an image
-def count_red_pixels(image):
-    # Convert image to HSV color space
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-
-    # Define lower and upper bounds for red color (two ranges)
-    lower_red1 = np.array([0, 100, 100])
-    upper_red1 = np.array([10, 255, 255])
-    lower_red2 = np.array([160, 100, 100])
-    upper_red2 = np.array([180, 255, 255])
-
-    # Create masks for red color
-    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-    mask = cv2.bitwise_or(mask1, mask2)
-
-    # Apply morphological opening to remove noise
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-
-    # Count red pixels
-    red_pixels = cv2.countNonZero(mask)
-
-    return red_pixels
+def grab_region(full_screen, region):
+    # Extract a specific region from the full screen image
+    x1, y1, x2, y2 = region
+    return full_screen[y1:y2 + 1, x1:x2 + 1]
 
 
-def extract_self_and_boss_blood(self_screen, boss_screen):
-    # Maximum possible red pixel counts for player and boss health bars
-    MAX_SELF_RED_PIXELS = 2300
-    MAX_BOSS_RED_PIXELS = 630
+# Extract health percentages for the player and the Boss
+def extract_health(self_screen, boss_screen):
+    # Function to calculate health percentage based on health bar length
+    def calculate_health_percentage(health_bar_image):
+        # Convert to HSV color space
+        hsv = cv2.cvtColor(health_bar_image, cv2.COLOR_BGR2HSV)
 
-    def calculate_health(screen, max_red_pixels, baseline_attr_name):
-        current_red = count_red_pixels(screen)
+        # Define red color range
+        lower_red1 = np.array([0, 100, 100])
+        upper_red1 = np.array([10, 255, 255])
+        lower_red2 = np.array([170, 100, 100])
+        upper_red2 = np.array([180, 255, 255])
 
-        # Initialize or update the baseline red pixel count
-        if not hasattr(calculate_health, baseline_attr_name):
-            setattr(calculate_health, baseline_attr_name, current_red)
+        # Create red mask
+        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+        mask = cv2.bitwise_or(mask1, mask2)
+
+        # Use Gaussian blur to reduce noise
+        mask = cv2.GaussianBlur(mask, (5, 5), 0)
+
+        # Project the mask along the vertical axis to get a horizontal profile
+        profile = np.sum(mask, axis=0)  # Sum along height to get values along the width
+
+        # Threshold the profile to detect the health bar length
+        threshold = np.max(profile) * 0.5  # Use 50% of the max value as the threshold
+        indices = np.where(profile > threshold)[0]
+
+        if len(indices) > 0:
+            health_bar_length = indices[-1] - indices[0]
+            health_percentage = (health_bar_length / mask.shape[1]) * 100
+            health_percentage = np.clip(health_percentage, 0, 100)
         else:
-            baseline_red = getattr(calculate_health, baseline_attr_name)
-            setattr(calculate_health, baseline_attr_name, max(baseline_red, current_red))
+            health_percentage = 0  # No health bar detected
 
-        # Cap the baseline red pixel count to the predefined maximum
-        baseline_red = min(getattr(calculate_health, baseline_attr_name), max_red_pixels)
+        return health_percentage
 
-        # Calculate the health percentage relative to the baseline
-        if baseline_red > 0:
-            health_percentage = (current_red / baseline_red) * 100
-            return min(health_percentage, 100)  # Cap at 100%
-        else:
-            return 0
+    # Calculate health percentages for the player and the Boss
+    self_health = calculate_health_percentage(self_screen)
+    boss_health = calculate_health_percentage(boss_screen)
 
-    # Calculate health percentages for both player and boss
-    self_health_percentage = calculate_health(self_screen, MAX_SELF_RED_PIXELS, "self_baseline_red")
-    boss_health_percentage = calculate_health(boss_screen, MAX_BOSS_RED_PIXELS, "boss_baseline_red")
+    logging.info(f'Player Health: {self_health:.2f}%, Boss Health: {boss_health:.2f}%')
 
-    logging.info(f'Player Health: {self_health_percentage:.2f}%, Boss Health: {boss_health_percentage:.2f}%')
-
-    # Display the health bar images for debugging if needed
+    # Optionally display health bar images for debugging
     cv2.imshow('Player Health Bar', self_screen)
-    cv2.moveWindow('Player Health Bar', 100, 570)
+    cv2.moveWindow('Player Health Bar', 100, 640)
     cv2.imshow('Boss Health Bar', boss_screen)
-    cv2.moveWindow('Boss Health Bar', 100, 640)
+    cv2.moveWindow('Boss Health Bar', 100, 710)
 
-    return self_health_percentage, boss_health_percentage
+    return self_health, boss_health
 
 
-def extract_posture_bar(self_screen, boss_screen):
-    # Define the HSV range for detecting the posture bar color
-    LOWER_COLOR = np.array([0, 100, 100])
-    UPPER_COLOR = np.array([30, 255, 255])
+# Extract posture percentages for the player and the Boss
+def extract_posture(self_screen, boss_screen):
+    # Function to calculate posture percentage based on posture bar length
+    def calculate_posture_percentage(posture_bar_image):
+        # Convert to HSV color space
+        hsv = cv2.cvtColor(posture_bar_image, cv2.COLOR_BGR2HSV)
 
-    # Function to calculate posture for a given screen
-    def calculate_posture_percentage(screen):
-        h, w = screen.shape[:2]
+        # Define color range for the posture bar (adjusted for yellow/orange)
+        lower_color = np.array([15, 100, 100])
+        upper_color = np.array([30, 255, 255])
 
-        # Convert to HSV for color detection
-        hsv = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)
+        # Create posture bar color mask
+        mask = cv2.inRange(hsv, lower_color, upper_color)
 
-        # Create a mask for the defined color range
-        mask_color = cv2.inRange(hsv, LOWER_COLOR, UPPER_COLOR)
+        # Use Gaussian blur to reduce noise
+        mask = cv2.GaussianBlur(mask, (5, 5), 0)
 
-        # Focus on the middle section to ignore side decorations
-        mid_section = mask_color[:, w // 4:3 * w // 4]
-        color_ratio = 2 * cv2.countNonZero(mid_section) / (mid_section.shape[0] * mid_section.shape[1])
+        # Project the mask along the vertical axis to get a horizontal profile
+        profile = np.sum(mask, axis=0)  # Sum along height to get values along the width
 
-        # Perform edge detection
-        gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blurred, 50, 150)
-        edge_ratio = np.count_nonzero(edges) / (w * h)
+        # Threshold the profile to detect the posture bar length
+        threshold = np.max(profile) * 0.5  # Use 50% of the max value as the threshold
+        indices = np.where(profile > threshold)[0]
 
-        # Determine posture percentage based on thresholds
-        if color_ratio > 0.1 and edge_ratio > 0.01:  # Adjust thresholds based on actual data
-            return min(color_ratio, 1) * 100  # Convert to percentage and cap at 100%
+        if len(indices) > 0:
+            posture_bar_length = indices[-1] - indices[0]
+            posture_percentage = (posture_bar_length / mask.shape[1]) * 100
+            posture_percentage = np.clip(posture_percentage, 0, 100)
         else:
-            return 0  # No detectable posture bar
+            posture_percentage = 0  # No posture bar detected
 
-    # Calculate posture percentages for both player and boss
-    self_posture_percentage = calculate_posture_percentage(self_screen)
-    boss_posture_percentage = calculate_posture_percentage(boss_screen)
+        return 1.8 * posture_percentage
 
-    logging.info(f'Player Posture: {self_posture_percentage:.2f}%, Boss Posture: {boss_posture_percentage:.2f}%')
+    # Calculate posture percentages for the player and the Boss
+    self_posture = calculate_posture_percentage(self_screen)
+    boss_posture = calculate_posture_percentage(boss_screen)
 
-    # Display the posture bar images for debugging if needed
+    logging.info(f'Player Posture: {self_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
+
+    # Optionally display posture bar images for debugging
+    cv2.namedWindow('Player Posture Bar', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Player Posture Bar', self_screen.shape[1], self_screen.shape[0])
+    cv2.moveWindow('Player Posture Bar', 100, 780)
     cv2.imshow('Player Posture Bar', self_screen)
-    cv2.moveWindow('Player Posture Bar', 100, 710)
+
+    cv2.namedWindow('Boss Posture Bar', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Boss Posture Bar', boss_screen.shape[1], boss_screen.shape[0])
+    cv2.moveWindow('Boss Posture Bar', 100, 890)
     cv2.imshow('Boss Posture Bar', boss_screen)
-    cv2.moveWindow('Boss Posture Bar', 100, 780)
 
-    return self_posture_percentage, boss_posture_percentage
+    return self_posture, boss_posture
 
 
-def get_remaining_uses(region, current_remaining_uses):
-    # Grab the screen region
-    screenshot = grab(region)
-
+# Extract remaining uses of items
+def get_remaining_uses(screenshot, current_remaining):
     # Convert to grayscale
     gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
 
     # Binarize the image
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # Extract text using OCR
+    # Use OCR to extract text
     config = "--psm 7"
     extracted_text = pytesseract.image_to_string(binary, config=config, lang='eng').strip()
 
-    # Error handling to ensure extracted text is a valid number
+    # Error handling to ensure the extracted text is a valid number
     try:
         remaining_uses = int(extracted_text)
-        # If successfully extracted, update the remaining uses
-        current_remaining_uses = remaining_uses
+        # Update the remaining uses if extraction is successful
+        current_remaining = remaining_uses
     except ValueError:
         pass
-        # Do not change current_remaining_uses if extraction fails
 
-    # Display the original screenshot and processed image, adjusted to fit the window size
+    # Display the original and processed images, adjust to fit window size
     cv2.namedWindow('Original Image', cv2.WINDOW_NORMAL)
     cv2.resizeWindow('Original Image', screenshot.shape[1], screenshot.shape[0])
-    cv2.moveWindow('Original Image', 550, 535)
+    cv2.moveWindow('Original Image', 550, 645)
     cv2.imshow('Original Image', screenshot)
 
     cv2.namedWindow('Processed Image', cv2.WINDOW_NORMAL)
     cv2.resizeWindow('Processed Image', binary.shape[1], binary.shape[0])
-    cv2.moveWindow('Processed Image', 550, 755)
+    cv2.moveWindow('Processed Image', 550, 825)
     cv2.imshow('Processed Image', binary)
 
     # Return the updated current_remaining_uses
-    return current_remaining_uses
+    return current_remaining
 
 
+if __name__ == "__main__":
+    regions = {
+        'self_blood': (54, 562, 400, 576),
+        'boss_blood': (56, 91, 289, 106),
+        'self_posture': (395, 535, 635, 552),
+        'boss_posture': (315, 73, 710, 88),
+        'remaining_uses': (955, 570, 970, 588)
+    }
 
+    current_remaining_uses = 19  # Initialize default value
+
+    while True:
+        # Capture the full screen once
+        full_screen_img = grab_full_screen()
+
+        # Extract all necessary regions at once
+        screens = {name: grab_region(full_screen_img, region) for name, region in regions.items()}
+
+        # Extract health percentages for the player and the Boss
+        self_health_percentage, boss_health_percentage = extract_health(
+            screens['self_blood'], screens['boss_blood'])
+
+        # Extract posture percentages for the player and the Boss
+        self_posture_percentage, boss_posture_percentage = extract_posture(
+            screens['self_posture'], screens['boss_posture'])
+
+        # Get remaining uses
+        current_remaining_uses = get_remaining_uses(screens['remaining_uses'], current_remaining_uses)
+
+        # Keep the window open until any key is pressed
+        cv2.waitKey(1)
