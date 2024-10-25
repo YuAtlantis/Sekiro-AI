@@ -4,7 +4,7 @@ import torch
 import logging
 import torch.nn.functional as F
 import numpy as np
-from dueling_dqn_manual import start_listeners, keyboard_result, mouse_result
+from dueling_dqn_manual import keyboard_result, mouse_result
 from dueling_dqn import DQNAgent, SMALL_BATCH_SIZE
 from tool_manager import ToolManager
 from game_control import take_action, pause_game, restart
@@ -162,14 +162,12 @@ class GameController:
         return reward
 
     def run(self):
-        # if self.env.manual:
-        #     start_listeners()
         for episode in range(self.env.episodes):
             self.env.reset_marks()
             print("Press 'T' to start the screen capture")
             self.env.paused = pause_game(self.env.paused)
 
-            last_time, last_grab_time = time.time(), time.time()
+            last_time = time.time()
 
             # Initial screen capture and feature extraction
             screens = self.env.grab_screens()
@@ -186,9 +184,9 @@ class GameController:
                 state = self.env.merge_states(resized_screens)
 
                 if self.env.target_step % 10 == 0:
-                    logging.info(f'Processing time: {time.time() - last_time:.2f}s in episode {episode}')
-
-                last_time = time.time()
+                    processing_time = time.time() - last_time
+                    logging.info(f'Processing time: {processing_time:.2f}s in episode {episode}')
+                    last_time = time.time()
 
                 if self.env.heal_cooldown > 0:
                     self.env.heal_cooldown -= 1
