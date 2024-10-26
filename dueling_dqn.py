@@ -8,6 +8,7 @@ import torch.nn.utils as utils
 import torch.nn.functional as functional
 from collections import deque
 from torchvision import models
+# tensorboard --logdir=logs
 from torch.utils.tensorboard import SummaryWriter
 
 # Experience replay buffer size

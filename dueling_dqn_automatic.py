@@ -4,7 +4,7 @@ import torch
 import logging
 import torch.nn.functional as F
 import numpy as np
-from input_keys import left_click, clear_action_state
+from input_keys import left_click, clear_action_state, attack
 from dueling_dqn_manual import keyboard_result, mouse_result
 from dueling_dqn import DQNAgent, SMALL_BATCH_SIZE
 from tool_manager import ToolManager
@@ -34,7 +34,7 @@ class GameEnvironment:
         self.self_stop_mark = 0
         self.target_step = 0
         self.heal_cooldown = 0
-        self.heal_count = 9
+        self.heal_count = 9999
         self.action_space_size = 8
         self.current_remaining_uses = 19
 
@@ -129,6 +129,8 @@ class GameController:
         self.total_reward = 0
         self.defeated = 0
         self.remaining_uses = 0
+        self.defeat_count = 0
+        self.defeat_window_start = None
         self.env = GameEnvironment()
         self.tool_manager = ToolManager()
         self.env.set_tool_manager(self.tool_manager)
@@ -139,12 +141,34 @@ class GameController:
             return 0, 0
 
         if state.next['self_hp'] < 1:
-            reward, defeated = -12, 1
+            reward, defeated = -13, 1
             self.total_reward += reward
 
-        elif state.next['boss_hp'] < 1:
-            reward, defeated = 50, 2
-            self.total_reward += reward
+        elif state.next['boss_hp'] < 0.5:
+            if self.defeat_count >= 3:
+                reward, defeated = 40, 2
+                self.total_reward += reward
+                self.defeat_count += 1
+                print("Boss final phase defeated, game over")
+                self.defeat_window_start = None
+            else:
+                if not self.defeat_window_start:
+                    self.defeat_window_start = time.time()
+                    reward, defeated = 0, 0
+                    print("Boss low-health window started, attacking to finish Boss...")
+                elif time.time() - self.defeat_window_start <= 3:
+                    attack()
+                    reward, defeated = 0, 0
+                    print("Continuing to attack Boss to ensure defeat...")
+                else:
+                    if state.next['boss_hp'] > 50:
+                        reward, defeated = 50, 2
+                        self.total_reward += reward
+                        self.defeat_count += 1
+                        print("Boss health restored above 50%, entering the next phase")
+                        self.defeat_window_start = None
+                    else:
+                        reward, defeated = 0, 0
 
         else:
             deltas = {key: state.next[key] - state.current[key] for key in state.current}
@@ -152,6 +176,7 @@ class GameController:
             defeated = 0
             self.total_reward += reward
             print(f'Current reward: {reward:.2f}, Total accumulated reward: {self.total_reward:.2f}')
+
         return reward, defeated
 
     def calculate_reward(self, deltas):
@@ -166,10 +191,10 @@ class GameController:
             reward += 12
 
         if deltas['self_posture'] > 9:
-            reward -= 3
+            reward -= 2
 
         if deltas['boss_posture'] > 5:
-            reward += 9
+            reward += 6
 
         return reward
 
@@ -241,13 +266,13 @@ class GameController:
                 # Evaluate reward and defeated status
                 reward, self.defeated = self.action_judge(state_obj)
 
-                if action == 5:
+                if action == 4:
                     self.env.heal_count -= 1
-                    self.env.heal_cooldown = 10
+                    self.env.heal_cooldown = 15
                     if state_obj.current['self_hp'] < 50:
-                        reward += 6
+                        reward += 2
                     else:
-                        reward -= 10
+                        reward -= 8
 
                 if action is not None:
                     self.agent.store_transition(state, action, reward, next_state, self.defeated)
@@ -264,7 +289,7 @@ class GameController:
                 state_obj.current = state_obj.next.copy()
 
             self.post_episode_updates(episode)
-            restart(self.env.debugged, self.defeated)
+            restart(self.env.debugged, self.defeated, self.defeat_count)
             self.env.waiting_for_health_restore = True
 
         cv2.destroyAllWindows()

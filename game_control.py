@@ -26,7 +26,7 @@ def wait_before_start(seconds, paused):
     print("Game paused." if paused else "Game started.")
 
 
-def restart(debugged, defeated):
+def restart(debugged, defeated, defeat_count):
     if not debugged:
         if defeated == 1:
             print("-------------------------You are dead and we are restarting a new round-------------------------")
@@ -41,15 +41,15 @@ def restart(debugged, defeated):
             input_keys.attack()  # Simulate an attack action to restart the game
 
         elif defeated == 2:
-            time.sleep(2)
-            input_keys.attack()
-            time.sleep(1)
-            input_keys.attack()
-            print("-------------------------You beat the boss and wait for the animation-------------------------")
-            input_keys.clear_action_state()  # Clear the current input state
-            print("-------------------------Waiting for 2 seconds for locking vision-------------------------")
-            time.sleep(2)
-            input_keys.lock_vision()
+            print(f"-------------------------You beat the boss {defeat_count} times-------------------------")
+            input_keys.clear_action_state()
+            if defeat_count > 2:
+                print("-------------------------Target boss defeat count reached. Stopping game and training")
+                pause_game(True)
+            else:
+                print("-------------------------Waiting for 1 seconds for locking vision-------------------------")
+                time.sleep(1)
+                input_keys.lock_vision()
 
 
 def pause_game(paused):
