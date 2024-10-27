@@ -95,13 +95,13 @@ def extract_posture(self_screen, boss_screen):
         mask = cv2.inRange(hsv, lower_color, upper_color)
 
         # Use Gaussian blur to reduce noise
-        mask = cv2.GaussianBlur(mask, (5, 5), 0)
+        mask = cv2.GaussianBlur(mask, (3, 3), 0)
 
         # Project the mask along the vertical axis to get a horizontal profile
         profile = np.sum(mask, axis=0)  # Sum along height to get values along the width
 
         # Threshold the profile to detect the posture bar length
-        threshold = np.max(profile) * 0.5  # Use 50% of the max value as the threshold
+        threshold = np.max(profile) * 0.3  # Use 50% of the max value as the threshold
         indices = np.where(profile > threshold)[0]
 
         if len(indices) > 0:
@@ -111,7 +111,7 @@ def extract_posture(self_screen, boss_screen):
         else:
             posture_percentage = 0  # No posture bar detected
 
-        return 1.8 * posture_percentage
+        return 1.5 * posture_percentage
 
     # Calculate posture percentages for the player and the Boss
     self_posture = calculate_posture_percentage(self_screen)
@@ -171,7 +171,7 @@ def get_remaining_uses(screenshot, current_remaining):
 if __name__ == "__main__":
     regions = {
         'self_blood': (54, 562, 400, 576),
-        'boss_blood': (56, 91, 289, 106),
+        'boss_blood': (57, 93, 288, 105),
         'self_posture': (395, 535, 635, 552),
         'boss_posture': (315, 73, 710, 88),
         'remaining_uses': (955, 570, 970, 588)

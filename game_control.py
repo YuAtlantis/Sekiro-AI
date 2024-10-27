@@ -43,7 +43,7 @@ def restart(debugged, defeated, defeat_count):
         elif defeated == 2:
             print(f"-------------------------You beat the boss {defeat_count} times-------------------------")
             input_keys.clear_action_state()
-            if defeat_count > 2:
+            if defeat_count >= 3:
                 print("-------------------------Target boss defeat count reached. Stopping game and training")
                 pause_game(True)
             else:

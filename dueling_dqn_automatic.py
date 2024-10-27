@@ -21,7 +21,7 @@ class GameEnvironment:
         self.episodes = episodes
         self.regions = {
             'self_blood': (55, 562, 399, 576),
-            'boss_blood': (57, 91, 290, 106),
+            'boss_blood': (57, 92, 290, 106),
             'self_posture': (395, 535, 635, 552),
             'boss_posture': (315, 73, 710, 88),
             'remaining_uses': (955, 570, 971, 588)
@@ -135,75 +135,113 @@ class GameController:
         self.tool_manager = ToolManager()
         self.env.set_tool_manager(self.tool_manager)
         self.agent = GameAgent()
+        self.reward_weights = {'self_hp_loss': -3, 'boss_hp_loss': 12, 'self_death': -12,
+                               'self_posture_increase': -2, 'boss_posture_increase': 5,
+                               'defeat_bonus': 40}
+        self.reward_type_distribution = {
+            'self_hp_loss': [],
+            'boss_hp_loss': [],
+            'self_posture_increase': [],
+            'boss_posture_increase': [],
+            'defeat_bonus': [],
+        }
+        self.current_reward_types = {key: 0 for key in self.reward_weights}
 
     def action_judge(self, state):
         if self.env.waiting_for_health_restore:
             return 0, 0
 
+        reward, defeated = 0, 0
         if state.next['self_hp'] < 1:
-            reward, defeated = -13, 1
-            self.total_reward += reward
+            reward += self.reward_weights['self_death']
+            self.current_reward_types['self_death'] += self.reward_weights['self_death']
+            defeated = 1
 
-        elif state.next['boss_hp'] < 0.5:
-            if self.defeat_count >= 3:
-                reward, defeated = 40, 2
-                self.total_reward += reward
-                self.defeat_count += 1
-                print("Boss final phase defeated, game over")
-                self.defeat_window_start = None
-            else:
-                if not self.defeat_window_start:
-                    self.defeat_window_start = time.time()
-                    reward, defeated = 0, 0
-                    print("Boss low-health window started, attacking to finish Boss...")
-                elif time.time() - self.defeat_window_start <= 3:
-                    attack()
-                    reward, defeated = 0, 0
-                    print("Continuing to attack Boss to ensure defeat...")
-                else:
-                    if state.next['boss_hp'] > 50:
-                        reward, defeated = 50, 2
-                        self.total_reward += reward
-                        self.defeat_count += 1
-                        print("Boss health restored above 50%, entering the next phase")
-                        self.defeat_window_start = None
-                    else:
-                        reward, defeated = 0, 0
+        elif state.next['boss_hp'] < 0.5 or state.next['boss_posture'] > 100:
+            reward, defeated = self.handle_boss_low_health(state)
+
+        elif state.next['self_posture'] > 80:
+            reward += self.reward_weights['self_posture_increase']
+            self.current_reward_types['self_posture_increase'] += self.reward_weights['self_posture_increase']
 
         else:
-            deltas = {key: state.next[key] - state.current[key] for key in state.current}
-            reward = self.calculate_reward(deltas)
-            defeated = 0
-            self.total_reward += reward
-            print(f'Current reward: {reward:.2f}, Total accumulated reward: {self.total_reward:.2f}')
+            reward += self.calculate_deltas(state)
 
+        self.total_reward += reward
+        logging.info(f'Current reward: {reward:.2f}, Total accumulated reward: {self.total_reward:.2f}')
         return reward, defeated
 
-    def calculate_reward(self, deltas):
+    def handle_boss_low_health(self, state):
+        if self.defeat_count >= 3:
+            reward = self.reward_weights['defeat_bonus']
+            self.current_reward_types['defeat_bonus'] += reward
+            defeated = 2
+            print("Boss final phase defeated, game over")
+            self.defeat_window_start = None
+        else:
+            reward = self.attack_in_low_health_phase(state)
+            defeated = 0
+        return reward, defeated
+
+    def attack_in_low_health_phase(self, state):
         reward = 0
-        if deltas['self_hp'] <= -6 and self.env.self_stop_mark == 0:
-            reward -= 4
+        if not self.defeat_window_start:
+            self.defeat_window_start = time.time()
+            print("Boss low-health window started, attacking to finish Boss...")
+        elif time.time() - self.defeat_window_start <= 3:
+            attack()
+            print("Continuing to attack Boss to ensure defeat...")
+        elif state.next['boss_hp'] > 50:
+            reward = self.reward_weights['defeat_bonus']
+            self.current_reward_types['defeat_bonus'] += reward
+            self.defeat_count += 1
+            print(f"Boss health restored above 50%, entering the next phase:{self.defeat_count}")
+            self.defeat_window_start = None
+        return reward
+
+    def calculate_deltas(self, state):
+        deltas = {key: state.next[key] - state.current[key] for key in state.current}
+        reward = 0
+        if deltas['self_hp'] < -6 and self.env.self_stop_mark == 0:
+            reward += self.reward_weights['self_hp_loss']
+            self.current_reward_types['self_hp_loss'] += self.reward_weights['self_hp_loss']
             self.env.self_stop_mark = 1
         else:
             self.env.self_stop_mark = 0
-
-        if deltas['boss_hp'] <= -2:
-            reward += 12
-
-        if deltas['self_posture'] > 9:
-            reward -= 2
-
-        if deltas['boss_posture'] > 5:
-            reward += 6
-
+        if deltas['boss_hp'] < -2:
+            reward += self.reward_weights['boss_hp_loss']
+            self.current_reward_types['boss_hp_loss'] += self.reward_weights['boss_hp_loss']
+        if deltas['self_posture'] > 8:
+            reward += self.reward_weights['self_posture_increase']
+            self.current_reward_types['self_posture_increase'] += self.reward_weights['self_posture_increase']
+        if deltas['boss_posture'] > 4:
+            reward += self.reward_weights['boss_posture_increase']
+            self.current_reward_types['boss_posture_increase'] += self.reward_weights['boss_posture_increase']
         return reward
+
+    def post_episode_updates(self, episode):
+        for key in self.reward_type_distribution:
+            self.reward_type_distribution[key].append(self.current_reward_types[key])
+
+        reward_summary = f"Episode {episode + 1} Summary: Total Reward: {self.total_reward:.2f} | " + \
+                         " | ".join([f"{key}: {value:.2f}" for key, value in self.current_reward_types.items()])
+
+        print(reward_summary)
+
+        self.total_reward = 0
+
+        self.current_reward_types = {key: 0 for key in self.reward_weights}
+
+        if episode % 10 == 0 and not self.env.debugged:
+            self.agent.update_target_network()
+        if episode % 40 == 0 and not self.env.debugged:
+            self.agent.save_model(episode)
 
     def run(self):
         for episode in range(self.env.episodes):
             self.env.reset_marks()
             print("Press 'T' to start the screen capture")
             self.env.paused = pause_game(self.env.paused)
-
             last_time = time.time()
 
             # Initial screen capture and feature extraction
@@ -270,9 +308,9 @@ class GameController:
                     self.env.heal_count -= 1
                     self.env.heal_cooldown = 15
                     if state_obj.current['self_hp'] < 50:
-                        reward += 2
+                        reward += 3
                     else:
-                        reward -= 8
+                        reward -= 7
 
                 if action is not None:
                     self.agent.store_transition(state, action, reward, next_state, self.defeated)
@@ -304,12 +342,6 @@ class GameController:
             action = mouse_result
             print(f'Mouse action detected: {action}')
             return action
-
-    def post_episode_updates(self, episode):
-        if episode % 10 == 0 and not self.env.debugged:
-            self.agent.update_target_network()
-        if episode % 40 == 0 and not self.env.debugged:
-            self.agent.save_model(episode)
 
 
 if __name__ == '__main__':
