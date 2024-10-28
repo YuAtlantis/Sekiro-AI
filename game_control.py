@@ -12,7 +12,7 @@ def take_action(action_index, debugged, tool_manager):
         elif action_index == 2:
             input_keys.tiptoe()
         elif action_index == 3:
-            input_keys.left_dodge()
+            input_keys.left()
         elif action_index == 4:
             input_keys.heal()
         elif action_index in [5, 6, 7]:
@@ -26,8 +26,8 @@ def wait_before_start(seconds, paused):
     print("Game paused." if paused else "Game started.")
 
 
-def restart(debugged, defeated, defeat_count):
-    if not debugged:
+def restart(debugged, defeated, defeat_count, manual):
+    if not debugged and not manual:
         if defeated == 1:
             print("-------------------------You are dead and we are restarting a new round-------------------------")
             input_keys.clear_action_state()
@@ -50,6 +50,9 @@ def restart(debugged, defeated, defeat_count):
                 print("-------------------------Waiting for 1 seconds for locking vision-------------------------")
                 time.sleep(1)
                 input_keys.lock_vision()
+    else:
+        print("-------------------------You are dead and you should restart a new round in 4s-------------------------")
+        time.sleep(4)
 
 
 def pause_game(paused):

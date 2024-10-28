@@ -13,7 +13,6 @@ last_keypress_time = 0
 debounce_time = 0.08  # Set debounce time to 0.08 seconds
 
 
-# Mouse click event handler
 def on_click(x, y, button, pressed):
     global mouse_result, last_click_time
     if pressed:  # Only execute logic when the mouse is pressed
@@ -23,22 +22,23 @@ def on_click(x, y, button, pressed):
             last_click_time = current_time  # Update last click time
             if button == button.left:
                 mouse_result = 1  # Attack action
+                print("Mouse Left Click - Attack, mouse_result:", mouse_result)
             elif button == button.right:
                 mouse_result = 0  # Defense action
+                print("Mouse Right Click - Defense, mouse_result:", mouse_result)
     return None
 
 
-# Keyboard press event handler
 def on_press(key):
     global keyboard_result, last_keypress_time
     current_time = time.time()
     if current_time - last_keypress_time > debounce_time:
         last_keypress_time = current_time
         try:
-            if key == Key.space:
-                keyboard_result = handle_key_action('space')  # Return jump action
-            else:
+            if hasattr(key, 'char') and key.char:
+                print(f"Key pressed: {key.char}")
                 keyboard_result = handle_key_action(key.char)  # Return the corresponding key action
+                print(f"Action mapped for '{key.char}': keyboard_result:", keyboard_result)
         except AttributeError:
             print(f'Special Key {key} pressed')
 
@@ -61,17 +61,19 @@ def handle_key_action(key_char):
 
     action_mapping = {
         'e': (2, "tiptoe"),
-        'space': (3, "jump"),
+        'a': (3, "left"),
+        '1': (4, "heal"),
     }
 
     if key_char == 'z':  # Tool switch
         tool_index += 1
         if tool_index > 3:
             tool_index = 1
-        tool_result = 3 + tool_index
+        tool_result = 4 + tool_index
         print(f"Change to the game tool {tool_index}")
 
     elif key_char == '3':  # Use the tool
+        tool_result = 4 + tool_index
         print(f"Use the game tool {tool_index}, return {tool_result}")
         return tool_result
 
@@ -96,3 +98,13 @@ def start_listeners():
 
     # Return the thread objects so the main program can continue running other tasks
     return mouse_listener_thread, keyboard_listener_thread
+
+
+if __name__ == "__main__":
+    mouse_thread, keyboard_thread = start_listeners()
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Exiting program.")
+

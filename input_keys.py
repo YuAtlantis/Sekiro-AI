@@ -131,10 +131,8 @@ def backward_dodge():
     release_key(KEY_CODES['S'])
 
 
-def left_dodge():
-    press_key(KEY_CODES['A'], 0.3)
-    tiptoe()
-    release_key(KEY_CODES['A'])
+def left():
+    perform_action('A', 0.1)
 
 
 def right_dodge():

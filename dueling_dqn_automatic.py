@@ -5,7 +5,7 @@ import logging
 import torch.nn.functional as F
 import numpy as np
 from input_keys import left_click, clear_action_state, attack
-from dueling_dqn_manual import keyboard_result, mouse_result
+from dueling_dqn_manual import keyboard_result, mouse_result, start_listeners
 from dueling_dqn import DQNAgent, SMALL_BATCH_SIZE
 from tool_manager import ToolManager
 from game_control import take_action, pause_game, restart
@@ -27,7 +27,7 @@ class GameEnvironment:
             'remaining_uses': (955, 570, 971, 588)
         }
         self.paused = True
-        self.manual = False
+        self.manual = True
         self.debugged = False
         self.waiting_for_health_restore = False
         self.tool_manager = None
@@ -95,8 +95,9 @@ class GameEnvironment:
 
 
 class GameAgent:
-    def __init__(self, input_channels=12, action_space=8, model_file="./models"):
-        self.dqn_agent = DQNAgent(input_channels, action_space, model_file)
+    def __init__(self, input_channels=12, action_space=8, model_file="./models/dueling_dqn_trained_episode_120.pth",
+                 model_folder="./models"):
+        self.dqn_agent = DQNAgent(input_channels, action_space, model_file, model_folder)
         self.TRAIN_BATCH_SIZE = SMALL_BATCH_SIZE
 
     def choose_action(self, state, action_mask):
@@ -152,15 +153,19 @@ class GameController:
             return 0, 0
 
         reward, defeated = 0, 0
+
+        if not (state.next['boss_hp'] < 0.5 or state.next['boss_posture'] > 100):
+            self.defeat_window_start = None
+
         if state.next['self_hp'] < 1:
             reward += self.reward_weights['self_death']
             self.current_reward_types['self_death'] += self.reward_weights['self_death']
             defeated = 1
 
-        elif state.next['boss_hp'] < 0.5 or state.next['boss_posture'] > 100:
+        elif state.next['boss_hp'] < 0.8 or state.next['boss_posture'] > 120:
             reward, defeated = self.handle_boss_low_health(state)
 
-        elif state.next['self_posture'] > 80:
+        elif state.next['self_posture'] > 90:
             reward += self.reward_weights['self_posture_increase']
             self.current_reward_types['self_posture_increase'] += self.reward_weights['self_posture_increase']
 
@@ -179,44 +184,58 @@ class GameController:
             print("Boss final phase defeated, game over")
             self.defeat_window_start = None
         else:
+            if not self.defeat_window_start:
+                self.defeat_window_start = time.time()
             reward = self.attack_in_low_health_phase(state)
             defeated = 0
         return reward, defeated
 
     def attack_in_low_health_phase(self, state):
         reward = 0
-        if not self.defeat_window_start:
-            self.defeat_window_start = time.time()
-            print("Boss low-health window started, attacking to finish Boss...")
-        elif time.time() - self.defeat_window_start <= 3:
-            attack()
-            print("Continuing to attack Boss to ensure defeat...")
-        elif state.next['boss_hp'] > 50:
-            reward = self.reward_weights['defeat_bonus']
-            self.current_reward_types['defeat_bonus'] += reward
-            self.defeat_count += 1
-            print(f"Boss health restored above 50%, entering the next phase:{self.defeat_count}")
+
+        if self.defeat_window_start and (time.time() - self.defeat_window_start < 5):
+            if state.next['boss_hp'] > 60:
+                reward = self.reward_weights['defeat_bonus']
+                self.current_reward_types['defeat_bonus'] += reward
+                self.defeat_count += 1
+                print(f"Boss health restored above 50%, entering the next phase: {self.defeat_count}")
+                self.defeat_window_start = None
+            else:
+                attack()
+                print("Continuing to attack Boss to ensure defeat...")
+
+        elif self.defeat_window_start and (time.time() - self.defeat_window_start >= 5):
             self.defeat_window_start = None
+
         return reward
 
     def calculate_deltas(self, state):
-        deltas = {key: state.next[key] - state.current[key] for key in state.current}
+        keys = ['self_hp', 'boss_hp', 'self_posture', 'boss_posture']
+        if not all(key in state.current and key in state.next for key in keys):
+            logging.error("Missing keys in state for delta calculation.")
+            return 0
+
+        deltas = {key: state.next[key] - state.current[key] for key in keys}
         reward = 0
+
         if deltas['self_hp'] < -6 and self.env.self_stop_mark == 0:
             reward += self.reward_weights['self_hp_loss']
             self.current_reward_types['self_hp_loss'] += self.reward_weights['self_hp_loss']
             self.env.self_stop_mark = 1
         else:
             self.env.self_stop_mark = 0
-        if deltas['boss_hp'] < -2:
+
+        if deltas['boss_hp'] < -3:
             reward += self.reward_weights['boss_hp_loss']
             self.current_reward_types['boss_hp_loss'] += self.reward_weights['boss_hp_loss']
-        if deltas['self_posture'] > 8:
+
+        if deltas['self_posture'] > 8 and state.next['self_posture'] > 60:
             reward += self.reward_weights['self_posture_increase']
             self.current_reward_types['self_posture_increase'] += self.reward_weights['self_posture_increase']
         if deltas['boss_posture'] > 4:
             reward += self.reward_weights['boss_posture_increase']
             self.current_reward_types['boss_posture_increase'] += self.reward_weights['boss_posture_increase']
+
         return reward
 
     def post_episode_updates(self, episode):
@@ -238,6 +257,8 @@ class GameController:
             self.agent.save_model(episode)
 
     def run(self):
+        if self.env.manual:
+            start_listeners()
         for episode in range(self.env.episodes):
             self.env.reset_marks()
             print("Press 'T' to start the screen capture")
@@ -327,7 +348,7 @@ class GameController:
                 state_obj.current = state_obj.next.copy()
 
             self.post_episode_updates(episode)
-            restart(self.env.debugged, self.defeated, self.defeat_count)
+            restart(self.env.debugged, self.defeated, self.defeat_count, self.env.manual)
             self.env.waiting_for_health_restore = True
 
         cv2.destroyAllWindows()
@@ -336,11 +357,9 @@ class GameController:
     def get_manual_action():
         if keyboard_result is not None:
             action = keyboard_result
-            print(f'Keyboard action detected: {action}')
             return action
         elif mouse_result is not None:
             action = mouse_result
-            print(f'Mouse action detected: {action}')
             return action
 
 
