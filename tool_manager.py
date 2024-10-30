@@ -5,9 +5,9 @@ import time
 class ToolManager:
     def __init__(self):
         self.tools = [
-            {'name': 'Tool 1', 'usage_cost': 1, 'cooldown': 16, 'last_used': 0},
-            {'name': 'Tool 2', 'usage_cost': 2, 'cooldown': 18, 'last_used': 0},
-            {'name': 'Tool 3', 'usage_cost': 3, 'cooldown': 22, 'last_used': 0}
+            {'name': 'Tool 1', 'usage_cost': 1, 'cooldown': 8, 'last_used': 0},
+            {'name': 'Tool 2', 'usage_cost': 2, 'cooldown': 10, 'last_used': 0},
+            {'name': 'Tool 3', 'usage_cost': 3, 'cooldown': 12, 'last_used': 0}
         ]
         self.current_tool_index = 0
         self.remaining_uses = 19

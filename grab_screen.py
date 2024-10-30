@@ -35,7 +35,7 @@ def extract_health(self_screen, boss_screen):
         # Convert to HSV color space
         hsv = cv2.cvtColor(health_bar_image, cv2.COLOR_BGR2HSV)
 
-        # Define red color range
+        # Adjusted red color range for the health bar
         lower_red1 = np.array([0, 100, 100])
         upper_red1 = np.array([10, 255, 255])
         lower_red2 = np.array([170, 100, 100])
@@ -46,22 +46,26 @@ def extract_health(self_screen, boss_screen):
         mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
         mask = cv2.bitwise_or(mask1, mask2)
 
-        # Use Gaussian blur to reduce noise
+        # Apply morphological operations
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         mask = cv2.GaussianBlur(mask, (5, 5), 0)
 
-        # Project the mask along the vertical axis to get a horizontal profile
-        profile = np.sum(mask, axis=0)  # Sum along height to get values along the width
+        # Use fixed threshold
+        fixed_threshold = 15  # Adjust this value based on experimentation
+        _, binary_mask = cv2.threshold(mask, fixed_threshold, 255, cv2.THRESH_BINARY)
 
-        # Threshold the profile to detect the health bar length
-        threshold = np.max(profile) * 0.5  # Use 50% of the max value as the threshold
-        indices = np.where(profile > threshold)[0]
+        # Find contours
+        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        if len(indices) > 0:
-            health_bar_length = indices[-1] - indices[0]
-            health_percentage = (health_bar_length / mask.shape[1]) * 100
+        # Assume the largest contour is the health bar
+        if contours:
+            largest_contour = max(contours, key=cv2.contourArea)
+            x, y, w, h = cv2.boundingRect(largest_contour)
+            health_percentage = (w / binary_mask.shape[1]) * 100
             health_percentage = np.clip(health_percentage, 0, 100)
         else:
-            health_percentage = 0  # No health bar detected
+            health_percentage = 0
 
         return health_percentage
 
@@ -111,7 +115,7 @@ def extract_posture(self_screen, boss_screen):
         else:
             posture_percentage = 0  # No posture bar detected
 
-        return 1.5 * posture_percentage
+        return posture_percentage
 
     # Calculate posture percentages for the player and the Boss
     self_posture = calculate_posture_percentage(self_screen)
@@ -177,7 +181,7 @@ if __name__ == "__main__":
         'remaining_uses': (955, 570, 970, 588)
     }
 
-    current_remaining_uses = 19  # Initialize default value
+    current_remaining_uses = 19
 
     while True:
         # Capture the full screen once

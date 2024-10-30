@@ -12,7 +12,7 @@ def take_action(action_index, debugged, tool_manager):
         elif action_index == 2:
             input_keys.tiptoe()
         elif action_index == 3:
-            input_keys.left()
+            input_keys.jump()
         elif action_index == 4:
             input_keys.heal()
         elif action_index in [5, 6, 7]:
