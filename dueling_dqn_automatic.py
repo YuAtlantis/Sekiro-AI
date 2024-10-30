@@ -3,8 +3,7 @@ import time
 import torch
 import logging
 import torch.nn.functional as F
-import numpy as np
-from input_keys import left_click, clear_action_state, attack
+from input_keys import clear_action_state, attack
 from dueling_dqn_manual import keyboard_result, mouse_result, start_listeners
 from dueling_dqn import DQNAgent, SMALL_BATCH_SIZE
 from tool_manager import ToolManager
@@ -15,11 +14,12 @@ logging.basicConfig(level=logging.INFO)
 
 
 class GameEnvironment:
-    def __init__(self, width=96, height=88, episodes=3000):
+    def __init__(self, width=128, height=128, episodes=3000):
         self.width = width
         self.height = height
         self.episodes = episodes
         self.regions = {
+            'game_window': (220, 145, 800, 530),
             'self_blood': (55, 562, 399, 576),
             'boss_blood': (57, 92, 290, 106),
             'self_posture': (395, 535, 635, 552),
@@ -27,13 +27,12 @@ class GameEnvironment:
             'remaining_uses': (955, 570, 971, 588)
         }
         self.paused = True
-        self.manual = True
+        self.manual = False
         self.debugged = False
-        self.waiting_for_health_restore = False
         self.tool_manager = None
         self.self_stop_mark = 0
         self.target_step = 0
-        self.heal_cooldown = 0
+        self.heal_cooldown = 5
         self.heal_count = 9999
         self.action_space_size = 8
         self.current_remaining_uses = 19
@@ -41,9 +40,9 @@ class GameEnvironment:
     def grab_screens(self):
         full_screen_img = grab_full_screen()
         screens = {key: grab_region(full_screen_img, region) for key, region in self.regions.items()}
-        # Separate 'remaining_uses' from the screens used for the model
         remaining_uses_img = screens.pop('remaining_uses', None)
-        return screens, remaining_uses_img
+        game_window_img = screens.pop('game_window')
+        return game_window_img, screens, remaining_uses_img
 
     @staticmethod
     def extract_features(screens):
@@ -54,23 +53,39 @@ class GameEnvironment:
         return {'self_hp': self_blood, 'boss_hp': boss_blood,
                 'self_posture': self_posture, 'boss_posture': boss_posture}
 
-    def resize_screens(self, screens):
-        resized_screens = {}
-        for key, img in screens.items():
-            img_tensor = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float().cuda()
-            resized_img = F.interpolate(img_tensor, size=(self.width, self.height), mode='bilinear',
-                                        align_corners=False)
-            resized_screens[key] = resized_img.squeeze(0).permute(1, 2, 0).cpu().numpy()
-        return resized_screens
+    def resize_screen(self, img):
+        img_tensor = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float().cuda()
+        resized_img = F.interpolate(img_tensor, size=(self.height, self.width), mode='bilinear',
+                                    align_corners=False)
+        resized_img = resized_img.squeeze(0).cpu().numpy()
+        return resized_img
 
     @staticmethod
-    def merge_states(screens):
-        # Ensure 'remaining_uses' is not included in the model input
-        return np.concatenate([img.transpose(2, 0, 1) for img in screens.values()], axis=0)
+    def prepare_state(img):
+        img_tensor = torch.from_numpy(img).float() / 255.0  # Already in [C, H, W] format for RGB images
+
+        # Ensure img_tensor has a batch dimension
+        img_tensor = img_tensor.unsqueeze(0)  # [1, C, H, W]
+
+        num_channels = img_tensor.shape[1]  # Should be 3 for RGB images
+
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(img_tensor.device)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(img_tensor.device)
+
+        # Adjust mean and std if num_channels is not 3
+        if num_channels != 3:
+            mean = mean[:, :num_channels, :, :]
+            std = std[:, :num_channels, :, :]
+
+        img_tensor = (img_tensor - mean) / std
+        img_tensor = img_tensor.squeeze(0)  # [C, H, W]
+
+        return img_tensor
 
     def reset_marks(self):
         self.self_stop_mark = 0
         self.target_step = 0
+        self.heal_count = 9999
 
     def get_action_mask(self):
         action_mask = [1] * self.action_space_size
@@ -95,7 +110,7 @@ class GameEnvironment:
 
 
 class GameAgent:
-    def __init__(self, input_channels=12, action_space=8, model_file="./models/dueling_dqn_trained_episode_120.pth",
+    def __init__(self, input_channels=3, action_space=8, model_file="./models/dueling_dqn_trained_episode_120.pth",
                  model_folder="./models"):
         self.dqn_agent = DQNAgent(input_channels, action_space, model_file, model_folder)
         self.TRAIN_BATCH_SIZE = SMALL_BATCH_SIZE
@@ -106,8 +121,8 @@ class GameAgent:
     def store_transition(self, *args):
         self.dqn_agent.store_transition(*args)
 
-    def train(self, episode):
-        self.dqn_agent.train(self.TRAIN_BATCH_SIZE, episode)
+    def train(self):
+        self.dqn_agent.train(self.TRAIN_BATCH_SIZE)
 
     def update_target_network(self):
         self.dqn_agent.update_target_network()
@@ -117,66 +132,69 @@ class GameAgent:
 
 
 class GameState:
-    def __init__(self, features):
-        self.current = features
-        self.next = {}
+    def __init__(self, features, state):
+        self.current_features = features
+        self.next_features = features.copy()
+        self.current_state = state
+        self.next_state = state.clone()
 
-    def update(self, features):
-        self.next = features
+    def update(self, features, state):
+        self.current_features = self.next_features.copy()
+        self.next_features = features.copy()
+        self.current_state = self.next_state.clone()
+        self.next_state = state.clone()
 
 
 class GameController:
     def __init__(self):
         self.total_reward = 0
         self.defeated = 0
-        self.remaining_uses = 0
         self.defeat_count = 0
         self.defeat_window_start = None
         self.env = GameEnvironment()
         self.tool_manager = ToolManager()
         self.env.set_tool_manager(self.tool_manager)
         self.agent = GameAgent()
-        self.reward_weights = {'self_hp_loss': -3, 'boss_hp_loss': 12, 'self_death': -12,
-                               'self_posture_increase': -2, 'boss_posture_increase': 5,
-                               'defeat_bonus': 40}
+        self.reward_weights = {
+            'self_hp_loss': -0.2,
+            'boss_hp_loss': 0.7,
+            'self_death': -15,
+            'self_posture_increase': -0.2,
+            'boss_posture_increase': 0.3,
+            'defeat_bonus': 30
+        }
         self.reward_type_distribution = {
             'self_hp_loss': [],
             'boss_hp_loss': [],
             'self_posture_increase': [],
             'boss_posture_increase': [],
             'defeat_bonus': [],
+            'self_death': [],
         }
         self.current_reward_types = {key: 0 for key in self.reward_weights}
 
-    def action_judge(self, state):
-        if self.env.waiting_for_health_restore:
-            return 0, 0
-
+    def action_judge(self, state_obj):
         reward, defeated = 0, 0
 
-        if not (state.next['boss_hp'] < 0.5 or state.next['boss_posture'] > 100):
+        if not (state_obj.next_features['boss_hp'] < 0.5 or state_obj.next_features['boss_posture'] > 92):
             self.defeat_window_start = None
 
-        if state.next['self_hp'] < 1:
+        if state_obj.next_features['self_hp'] <= 0.1:
             reward += self.reward_weights['self_death']
             self.current_reward_types['self_death'] += self.reward_weights['self_death']
             defeated = 1
 
-        elif state.next['boss_hp'] < 0.8 or state.next['boss_posture'] > 120:
-            reward, defeated = self.handle_boss_low_health(state)
-
-        elif state.next['self_posture'] > 90:
-            reward += self.reward_weights['self_posture_increase']
-            self.current_reward_types['self_posture_increase'] += self.reward_weights['self_posture_increase']
+        elif state_obj.next_features['boss_hp'] <= 0.1:
+            reward, defeated = self.handle_boss_low_health(state_obj)
 
         else:
-            reward += self.calculate_deltas(state)
+            reward += self.calculate_deltas(state_obj)
 
         self.total_reward += reward
         logging.info(f'Current reward: {reward:.2f}, Total accumulated reward: {self.total_reward:.2f}')
         return reward, defeated
 
-    def handle_boss_low_health(self, state):
+    def handle_boss_low_health(self, state_obj):
         if self.defeat_count >= 3:
             reward = self.reward_weights['defeat_bonus']
             self.current_reward_types['defeat_bonus'] += reward
@@ -186,61 +204,54 @@ class GameController:
         else:
             if not self.defeat_window_start:
                 self.defeat_window_start = time.time()
-            reward = self.attack_in_low_health_phase(state)
+            print("Boss health <= 0 and try to execute it")
+            reward = self.attack_in_low_health_phase(state_obj)
             defeated = 0
         return reward, defeated
 
-    def attack_in_low_health_phase(self, state):
+    def attack_in_low_health_phase(self, state_obj):
         reward = 0
-
-        if self.defeat_window_start and (time.time() - self.defeat_window_start < 5):
-            if state.next['boss_hp'] > 60:
+        if self.defeat_window_start:
+            time_elapsed = time.time() - self.defeat_window_start
+            if state_obj.current_features['boss_hp'] > 50:
                 reward = self.reward_weights['defeat_bonus']
                 self.current_reward_types['defeat_bonus'] += reward
                 self.defeat_count += 1
                 print(f"Boss health restored above 50%, entering the next phase: {self.defeat_count}")
                 self.defeat_window_start = None
-            else:
+            elif time_elapsed < 8:
                 attack()
                 print("Continuing to attack Boss to ensure defeat...")
-
-        elif self.defeat_window_start and (time.time() - self.defeat_window_start >= 5):
-            self.defeat_window_start = None
-
+            else:
+                self.defeat_window_start = None
         return reward
 
-    def calculate_deltas(self, state):
+    def calculate_deltas(self, state_obj):
         keys = ['self_hp', 'boss_hp', 'self_posture', 'boss_posture']
-        if not all(key in state.current and key in state.next for key in keys):
-            logging.error("Missing keys in state for delta calculation.")
-            return 0
-
-        deltas = {key: state.next[key] - state.current[key] for key in keys}
+        deltas = {key: state_obj.next_features[key] - state_obj.current_features[key] for key in keys}
         reward = 0
 
-        if deltas['self_hp'] < -6 and self.env.self_stop_mark == 0:
-            reward += self.reward_weights['self_hp_loss']
-            self.current_reward_types['self_hp_loss'] += self.reward_weights['self_hp_loss']
-            self.env.self_stop_mark = 1
-        else:
-            self.env.self_stop_mark = 0
+        if deltas['self_hp'] < -6:
+            reward += self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
+            self.current_reward_types['self_hp_loss'] += self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
 
         if deltas['boss_hp'] < -3:
-            reward += self.reward_weights['boss_hp_loss']
-            self.current_reward_types['boss_hp_loss'] += self.reward_weights['boss_hp_loss']
+            reward += self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
+            self.current_reward_types['boss_hp_loss'] += self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
 
-        if deltas['self_posture'] > 8 and state.next['self_posture'] > 60:
-            reward += self.reward_weights['self_posture_increase']
-            self.current_reward_types['self_posture_increase'] += self.reward_weights['self_posture_increase']
-        if deltas['boss_posture'] > 4:
-            reward += self.reward_weights['boss_posture_increase']
-            self.current_reward_types['boss_posture_increase'] += self.reward_weights['boss_posture_increase']
+        if deltas['self_posture'] > 6 and state_obj.next_features["self_posture"] > 80:
+            reward += self.reward_weights['self_posture_increase'] * deltas['self_posture']
+            self.current_reward_types['self_posture_increase'] += self.reward_weights['self_posture_increase'] * deltas['self_posture']
+
+        if deltas['boss_posture'] > 3:
+            reward += self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
+            self.current_reward_types['boss_posture_increase'] += self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
 
         return reward
 
     def post_episode_updates(self, episode):
         for key in self.reward_type_distribution:
-            self.reward_type_distribution[key].append(self.current_reward_types[key])
+            self.reward_type_distribution[key].append(self.current_reward_types.get(key, 0))
 
         reward_summary = f"Episode {episode + 1} Summary: Total Reward: {self.total_reward:.2f} | " + \
                          " | ".join([f"{key}: {value:.2f}" for key, value in self.current_reward_types.items()])
@@ -248,12 +259,11 @@ class GameController:
         print(reward_summary)
 
         self.total_reward = 0
-
         self.current_reward_types = {key: 0 for key in self.reward_weights}
 
         if episode % 10 == 0 and not self.env.debugged:
             self.agent.update_target_network()
-        if episode % 40 == 0 and not self.env.debugged:
+        if episode % 50 == 0 and not self.env.debugged:
             self.agent.save_model(episode)
 
     def run(self):
@@ -265,32 +275,16 @@ class GameController:
             self.env.paused = pause_game(self.env.paused)
             last_time = time.time()
 
-            # Initial screen capture and feature extraction
-            screens, remaining_uses_img = self.env.grab_screens()
+            game_window_img, screens, remaining_uses_img = self.env.grab_screens()
             features = self.env.extract_features(screens)
-            state_obj = GameState(features)
+            resized_img = self.env.resize_screen(game_window_img)
+            state = self.env.prepare_state(resized_img)
+            state_obj = GameState(features, state)
 
             while True:
                 self.env.target_step += 1
                 cv2.waitKey(1)
-
-                if self.env.waiting_for_health_restore:
-                    if state_obj.current['self_hp'] > 30:
-                        self.env.waiting_for_health_restore = False
-                        print("Player health restored. Resuming normal operation.")
-                        time.sleep(2)
-                    else:
-                        print("Waiting for player health to restore...")
-                        screens, remaining_uses_img = self.env.grab_screens()
-                        features = self.env.extract_features(screens)
-                        state_obj = GameState(features)
-                        left_click()
-                        time.sleep(2)
-                        continue
-
-                # Process screen data and state
-                resized_screens = self.env.resize_screens(screens)
-                state = self.env.merge_states(resized_screens)
+                self.env.paused = pause_game(self.env.paused)
 
                 if self.env.target_step % 10 == 0:
                     processing_time = time.time() - last_time
@@ -305,62 +299,54 @@ class GameController:
                 if self.env.manual:
                     action = self.get_manual_action()
                 else:
-                    action = self.agent.choose_action(state, action_mask)
+                    action = self.agent.choose_action(state_obj.current_state, action_mask)
 
                 if not self.env.manual and action is not None:
+                    clear_action_state()
                     take_action(action, self.env.debugged, self.tool_manager)
 
-                # Capture screens and update 'remaining_uses'
-                screens, remaining_uses_img = self.env.grab_screens()
+                game_window_img, screens, remaining_uses_img = self.env.grab_screens()
 
                 if self.env.target_step % 10 == 0:
                     self.env.update_remaining_uses(remaining_uses_img)
 
-                # Get next state and update
                 features = self.env.extract_features(screens)
-                resized_screens = self.env.resize_screens(screens)
-                next_state = self.env.merge_states(resized_screens)
-                state_obj.update(features)
+                resized_img = self.env.resize_screen(game_window_img)
+                next_state = self.env.prepare_state(resized_img)
+                state_obj.update(features, next_state)
 
-                # Evaluate reward and defeated status
                 reward, self.defeated = self.action_judge(state_obj)
 
                 if action == 4:
                     self.env.heal_count -= 1
                     self.env.heal_cooldown = 15
-                    if state_obj.current['self_hp'] < 50:
+                    if state_obj.current_features['self_hp'] < 50:
                         reward += 3
                     else:
                         reward -= 7
 
                 if action is not None:
-                    self.agent.store_transition(state, action, reward, next_state, self.defeated)
+                    self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state, self.defeated)
 
                 if self.env.target_step % self.agent.TRAIN_BATCH_SIZE == 0:
-                    self.agent.train(episode)
+                    self.agent.train()
 
                 if self.defeated:
                     clear_action_state()
                     break
 
-                # Pause control
-                self.env.paused = pause_game(self.env.paused)
-                state_obj.current = state_obj.next.copy()
-
+            clear_action_state()
             self.post_episode_updates(episode)
             restart(self.env.debugged, self.defeated, self.defeat_count, self.env.manual)
-            self.env.waiting_for_health_restore = True
 
         cv2.destroyAllWindows()
 
     @staticmethod
     def get_manual_action():
         if keyboard_result is not None:
-            action = keyboard_result
-            return action
+            return keyboard_result
         elif mouse_result is not None:
-            action = mouse_result
-            return action
+            return mouse_result
 
 
 if __name__ == '__main__':
