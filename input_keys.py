@@ -44,13 +44,13 @@ class Input(ctypes.Structure):
 
 def left_click():
     mouse_action(MOUSE_CODES['LEFT_CLICK'])
-    time.sleep(0.05)
+    time.sleep(0.08)
     mouse_action(MOUSE_CODES['LEFT_RELEASE'])
 
 
 def right_click():
     mouse_action(MOUSE_CODES['RIGHT_CLICK'])
-    time.sleep(0.05)
+    time.sleep(0.08)
     mouse_action(MOUSE_CODES['RIGHT_RELEASE'])
 
 
@@ -64,22 +64,28 @@ def move_mouse(dx, dy):
     mouse_action(0x0001, dx, dy)
 
 
+pressed_keys = set()
+pressed_mouse_buttons = set()
+
+
 def press_key(hexKeyCode, press_time=0.05):
     extra = ctypes.c_ulong(0)
     ii_ = Input_I()
     ii_.ki = KeyBdInput(0, hexKeyCode, 0x0008, 0, ctypes.pointer(extra))
     x = Input(ctypes.c_ulong(1), ii_)
     SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+    pressed_keys.add(hexKeyCode)
     time.sleep(press_time)
-    release_key(hexKeyCode)
 
 
 def release_key(hexKeyCode):
-    extra = ctypes.c_ulong(0)
-    ii_ = Input_I()
-    ii_.ki = KeyBdInput(0, hexKeyCode, 0x0008 | 0x0002, 0, ctypes.pointer(extra))
-    x = Input(ctypes.c_ulong(1), ii_)
-    SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+    if hexKeyCode in pressed_keys:
+        extra = ctypes.c_ulong(0)
+        ii_ = Input_I()
+        ii_.ki = KeyBdInput(0, hexKeyCode, 0x0008 | 0x0002, 0, ctypes.pointer(extra))
+        x = Input(ctypes.c_ulong(1), ii_)
+        SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+        pressed_keys.remove(hexKeyCode)
 
 
 def mouse_action(mouseCode, dx=0, dy=0):
@@ -88,6 +94,12 @@ def mouse_action(mouseCode, dx=0, dy=0):
     ii_.mi = MouseInput(dx, dy, 0, mouseCode, 0, ctypes.pointer(extra))
     x = Input(ctypes.c_ulong(0), ii_)
     SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+    if mouseCode in [MOUSE_CODES['LEFT_CLICK'], MOUSE_CODES['RIGHT_CLICK'], MOUSE_CODES['MIDDLE_CLICK']]:
+        pressed_mouse_buttons.add(mouseCode)
+    elif mouseCode in [MOUSE_CODES['LEFT_RELEASE'], MOUSE_CODES['RIGHT_RELEASE'], MOUSE_CODES['MIDDLE_RELEASE']]:
+        click_code = mouseCode - 2
+        if click_code in pressed_mouse_buttons:
+            pressed_mouse_buttons.remove(click_code)
 
 
 def perform_action(action, duration):
@@ -155,13 +167,8 @@ def key_check():
 
 
 def clear_action_state():
-    for key in KEY_CODES.values():
+    for key in list(pressed_keys):
         release_key(key)
-
-    for action_name, action_code in MOUSE_CODES.items():
-        if "CLICK" in action_name:
-            release_action_name = action_name.replace("CLICK", "RELEASE")
-            if release_action_name in MOUSE_CODES:
-                release_action_code = MOUSE_CODES[release_action_name]
-                mouse_action(release_action_code)
-
+    for mouse_code in list(pressed_mouse_buttons):
+        release_code = mouse_code + 2
+        mouse_action(release_code)

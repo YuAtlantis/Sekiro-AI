@@ -151,6 +151,7 @@ class GameController:
         self.defeated = 0
         self.defeat_count = 0
         self.defeat_window_start = None
+        self.phase_transition_detected = False
         self.env = GameEnvironment()
         self.tool_manager = ToolManager()
         self.env.set_tool_manager(self.tool_manager)
@@ -175,9 +176,8 @@ class GameController:
 
     def action_judge(self, state_obj):
         reward, defeated = 0, 0
-
-        if not (state_obj.next_features['boss_hp'] < 0.5 or state_obj.next_features['boss_posture'] > 92):
-            self.defeat_window_start = None
+        self.defeat_window_start = None
+        self.phase_transition_detected = False
 
         if state_obj.next_features['self_hp'] <= 0.1:
             reward += self.reward_weights['self_death']
@@ -195,35 +195,40 @@ class GameController:
         return reward, defeated
 
     def handle_boss_low_health(self, state_obj):
-        if self.defeat_count >= 3:
+        if self.defeat_count >= 2:
             reward = self.reward_weights['defeat_bonus']
             self.current_reward_types['defeat_bonus'] += reward
-            defeated = 2
-            print("Boss final phase defeated, game over")
+            self.defeated = 2
+            print("Boss 最终阶段被击败，游戏结束")
             self.defeat_window_start = None
         else:
             if not self.defeat_window_start:
                 self.defeat_window_start = time.time()
-            print("Boss health <= 0 and try to execute it")
+            print("Boss 血量 <= 0，尝试击杀")
             reward = self.attack_in_low_health_phase(state_obj)
-            defeated = 0
-        return reward, defeated
+            self.defeated = 0
+        return reward, self.defeated
 
     def attack_in_low_health_phase(self, state_obj):
         reward = 0
-        if self.defeat_window_start:
-            time_elapsed = time.time() - self.defeat_window_start
-            if state_obj.current_features['boss_hp'] > 50:
+        time_elapsed = time.time() - self.defeat_window_start if self.defeat_window_start else 0
+
+        if state_obj.current_features['boss_hp'] > 50:
+            if not self.phase_transition_detected:
                 reward = self.reward_weights['defeat_bonus']
                 self.current_reward_types['defeat_bonus'] += reward
                 self.defeat_count += 1
-                print(f"Boss health restored above 50%, entering the next phase: {self.defeat_count}")
+                self.phase_transition_detected = True
+                print(f"Boss 血量恢复至 50% 以上，进入下一阶段：{self.defeat_count}")
                 self.defeat_window_start = None
-            elif time_elapsed < 8:
+        else:
+            if time_elapsed < 8:
                 attack()
-                print("Continuing to attack Boss to ensure defeat...")
+                print("继续攻击 Boss，确保击败...")
             else:
                 self.defeat_window_start = None
+                self.phase_transition_detected = False
+
         return reward
 
     def calculate_deltas(self, state_obj):
@@ -269,10 +274,11 @@ class GameController:
     def run(self):
         if self.env.manual:
             start_listeners()
+        print("Press 'T' to start the screen capture")
         for episode in range(self.env.episodes):
             self.env.reset_marks()
-            print("Press 'T' to start the screen capture")
             self.env.paused = pause_game(self.env.paused)
+            clear_action_state()
             last_time = time.time()
 
             game_window_img, screens, remaining_uses_img = self.env.grab_screens()
@@ -283,8 +289,8 @@ class GameController:
 
             while True:
                 self.env.target_step += 1
-                cv2.waitKey(1)
                 self.env.paused = pause_game(self.env.paused)
+                cv2.waitKey(1)
 
                 if self.env.target_step % 10 == 0:
                     processing_time = time.time() - last_time
@@ -302,7 +308,6 @@ class GameController:
                     action = self.agent.choose_action(state_obj.current_state, action_mask)
 
                 if not self.env.manual and action is not None:
-                    clear_action_state()
                     take_action(action, self.env.debugged, self.tool_manager)
 
                 game_window_img, screens, remaining_uses_img = self.env.grab_screens()
@@ -332,12 +337,10 @@ class GameController:
                     self.agent.train()
 
                 if self.defeated:
-                    clear_action_state()
                     break
 
-            clear_action_state()
             self.post_episode_updates(episode)
-            restart(self.env.debugged, self.defeated, self.defeat_count, self.env.manual)
+            restart(self.env, self.defeated, self.defeat_count)
 
         cv2.destroyAllWindows()
 

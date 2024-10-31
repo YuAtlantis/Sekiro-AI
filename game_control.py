@@ -1,5 +1,6 @@
 import time
 import input_keys
+import pygetwindow as gw
 
 
 def take_action(action_index, debugged, tool_manager):
@@ -26,19 +27,30 @@ def wait_before_start(seconds, paused):
     print("Game paused." if paused else "Game started.")
 
 
-def restart(debugged, defeated, defeat_count, manual):
-    if not debugged and not manual:
+def focus_game_window():
+    windows = gw.getWindowsWithTitle('Sekiro')
+    if windows:
+        game_window = windows[0]
+        game_window.activate()
+    else:
+        print("Game window not found")
+
+
+def restart(env, defeated, defeat_count):
+    if not env.debugged and not env.manual:
         if defeated == 1:
             print("-------------------------You are dead and we are restarting a new round-------------------------")
             input_keys.clear_action_state()
-            print("-------------------------Waiting for 8 seconds before lock vision-------------------------")
-            time.sleep(8)
+            print("-------------------------Waiting for 6 seconds before lock vision-------------------------")
+            time.sleep(6)
             print("-------------------------Waiting for 2 seconds for locking vision-------------------------")
+            focus_game_window()
             time.sleep(1)
             input_keys.lock_vision()
             time.sleep(1)
             print("-------------------------Restart the fighting now by left click mouse-------------------------")
-            input_keys.attack()  # Simulate an attack action to restart the game
+            input_keys.attack()
+            time.sleep(2)
 
         elif defeated == 2:
             print(f"-------------------------You beat the boss {defeat_count} times-------------------------")
