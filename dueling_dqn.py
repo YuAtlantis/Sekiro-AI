@@ -175,7 +175,7 @@ class DQNAgent:
         self.beta = BETA_START
         self.model_folder = model_folder
         self.model_file = model_file
-        self.writer = SummaryWriter(log_dir=f'./logs/run_{self.global_step}_{time.strftime("%Y%m%d-%H%M%S")}')
+        self.writer = SummaryWriter(log_dir=f'./logs/run_{self.global_step}')
 
         # Load checkpoint or model
         self.load_checkpoint_or_model()

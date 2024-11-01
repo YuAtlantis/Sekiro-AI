@@ -30,6 +30,7 @@ class GameEnvironment:
         self.manual = False
         self.debugged = False
         self.tool_manager = None
+        self.single_life_boss = True
         self.self_stop_mark = 0
         self.target_step = 0
         self.heal_cooldown = 5
@@ -150,6 +151,7 @@ class GameController:
         self.total_reward = 0
         self.defeated = 0
         self.defeat_count = 0
+        self.missing_boss_hp_steps = 0
         self.defeat_window_start = None
         self.phase_transition_detected = False
         self.env = GameEnvironment()
@@ -219,11 +221,11 @@ class GameController:
             return False
 
     def handle_boss_low_health(self, state_obj):
-        if self.defeat_count >= 2:
+        if self.defeat_count >= 2 or self.env.single_life_boss:
             reward = self.reward_weights['defeat_bonus']
             self.current_reward_types['defeat_bonus'] += reward
             self.defeated = 2
-            print("Boss defeated in final stage, game over")
+            print("Boss defeated, game over")
             self.defeat_window_start = None
         else:
             if not self.defeat_window_start:
@@ -237,7 +239,19 @@ class GameController:
         reward = 0
         time_elapsed = time.time() - self.defeat_window_start if self.defeat_window_start else 0
 
-        if state_obj.current_features['boss_hp'] > 50:
+        if self.env.single_life_boss:
+            self.missing_boss_hp_steps += 1
+        elif state_obj.next_features['boss_hp'] <= 0.1:
+            self.missing_boss_hp_steps += 1
+        else:
+            self.missing_boss_hp_steps = 0
+
+        if self.missing_boss_hp_steps > 256:
+            print("Boss血条已消失，停止游戏")
+            self.defeated = 2
+            return reward
+
+        if not self.env.single_life_boss and state_obj.current_features['boss_hp'] > 50:
             if not self.phase_transition_detected:
                 reward = self.reward_weights['defeat_bonus']
                 self.current_reward_types['defeat_bonus'] += reward
@@ -378,12 +392,13 @@ class GameController:
                     self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,
                                                 self.defeated)
 
-                if self.env.target_step % (self.agent.TRAIN_BATCH_SIZE / 2) == 0:
+                if self.env.target_step % 64 == 0:
                     self.agent.train()
 
                 if self.defeated:
                     break
 
+            clear_action_state()
             self.post_episode_updates(episode)
             restart(self.env, self.defeated, self.defeat_count)
 

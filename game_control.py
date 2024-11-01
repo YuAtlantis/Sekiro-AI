@@ -37,34 +37,32 @@ def focus_game_window():
 
 
 def restart(env, defeated, defeat_count):
-    if not env.debugged and not env.manual:
-        if defeated == 1:
-            print("-------------------------You are dead and we are restarting a new round-------------------------")
-            input_keys.clear_action_state()
-            print("-------------------------Waiting for 6 seconds before lock vision-------------------------")
-            time.sleep(6)
-            print("-------------------------Waiting for 2 seconds for locking vision-------------------------")
-            focus_game_window()
-            time.sleep(1)
-            input_keys.lock_vision()
-            time.sleep(1)
-            print("-------------------------Restart the fighting now by left click mouse-------------------------")
-            input_keys.attack()
-            time.sleep(2)
+    def reset_actions_and_pause():
+        input_keys.clear_action_state()
+        pause_game(True)
 
-        elif defeated == 2:
-            print(f"-------------------------You beat the boss {defeat_count} times-------------------------")
-            input_keys.clear_action_state()
-            if defeat_count >= 3:
-                print("-------------------------Target boss defeat count reached. Stopping game and training")
-                pause_game(True)
-            else:
-                print("-------------------------Waiting for 1 seconds for locking vision-------------------------")
-                time.sleep(1)
-                input_keys.lock_vision()
-    else:
-        print("-------------------------You are dead and you should restart a new round in 4s-------------------------")
-        time.sleep(4)
+    def restart_sequence():
+        print("-------------------------You are dead and we are restarting a new round-------------------------")
+        input_keys.clear_action_state()
+        print("-------------------------Waiting for 7 seconds before lock vision-------------------------")
+        time.sleep(7)
+        focus_game_window()
+        time.sleep(1)
+        input_keys.lock_vision()
+        time.sleep(1)
+        print("-------------------------Restart the fighting now by left click mouse-------------------------")
+        input_keys.attack()
+        time.sleep(2)
+
+    if defeated == 1:
+        if env.manual:
+            print("-------------------------You are dead and should restart a new round in 4s-------------------------")
+            time.sleep(4)
+        else:
+            restart_sequence()
+    elif defeated == 2:
+        print(f"-------------------------You beat the boss {defeat_count} times-------------------------")
+        reset_actions_and_pause()
 
 
 def pause_game(paused):
