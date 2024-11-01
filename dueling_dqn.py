@@ -1,27 +1,28 @@
 import os
+import time
 import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.init as init
 import torch.nn.utils as utils
-import torch.nn.functional as functional
-from collections import deque
 from torchvision.models import resnet101, ResNet101_Weights
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
 # Experience replay buffer size
-REPLAY_SIZE = 100000
+REPLAY_SIZE = 1048576
 # Minibatch size
 SMALL_BATCH_SIZE = 64
 BIG_BATCH_SIZE = 128
 BATCH_SIZE_DOOR = 1000
 
 # Hyperparameters for Dueling DQN
-GAMMA = 0.9
-INITIAL_EPSILON = 0.5
+GAMMA = 0.99
+INITIAL_EPSILON = 1.0
 FINAL_EPSILON = 0.01
-LR = 0.0001
+EPSILON_DECAY = 100000
+LR = 1e-3
 ALPHA = 0.6
 BETA_START = 0.4
 BETA_FRAMES = 100000
@@ -38,6 +39,7 @@ class DuelingDQN(nn.Module):
         # Using ResNet101 for feature extraction
         self.feature_extractor = resnet101(weights=ResNet101_Weights.DEFAULT)
         self.feature_extractor.conv1 = nn.Conv2d(input_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        init.kaiming_normal_(self.feature_extractor.conv1.weight, mode='fan_out', nonlinearity='relu')
         self.feature_extractor.fc = nn.Identity()
 
         self.value_stream = nn.Sequential(
@@ -168,12 +170,12 @@ class DQNAgent:
         self.target_net = DuelingDQN(input_channels, action_space).to(device)
         self.update_target_network()
         trainable_params = filter(lambda p: p.requires_grad, self.eval_net.parameters())
-        self.optimizer = optim.Adam(trainable_params, lr=LR)
+        self.optimizer = optim.Adam(trainable_params, lr=LR, weight_decay=1e-5)
         self.epsilon = INITIAL_EPSILON
         self.beta = BETA_START
         self.model_folder = model_folder
         self.model_file = model_file
-        self.writer = SummaryWriter(log_dir=f'./logs/run_{self.global_step}')
+        self.writer = SummaryWriter(log_dir=f'./logs/run_{self.global_step}_{time.strftime("%Y%m%d-%H%M%S")}')
 
         # Load checkpoint or model
         self.load_checkpoint_or_model()
@@ -236,7 +238,7 @@ class DQNAgent:
                 action = torch.argmax(masked_q_values).item()
             else:
                 raise ValueError("State input must have 4 dimensions: [batch, channels, height, width]")
-        self.epsilon = max(FINAL_EPSILON, self.epsilon - (INITIAL_EPSILON - FINAL_EPSILON) / 20000)
+        self.epsilon = max(FINAL_EPSILON, self.epsilon - (INITIAL_EPSILON - FINAL_EPSILON) / EPSILON_DECAY)
         return action
 
     def store_transition(self, state, action, reward, next_state, done):
@@ -267,7 +269,6 @@ class DQNAgent:
         if len(self.replay_buffer) < batch_size:
             return
 
-        # 线性增加beta
         self.beta = min(1.0, self.beta + (1.0 - BETA_START) / BETA_FRAMES)
 
         samples, idxs, is_weights = self.replay_buffer.sample(batch_size, self.beta)
@@ -282,7 +283,8 @@ class DQNAgent:
         q_values = self.eval_net(state_batch).gather(1, action_batch).squeeze(1)
 
         with torch.no_grad():
-            next_q_values = self.target_net(next_state_batch).max(1)[0]
+            next_actions = self.eval_net(next_state_batch).argmax(1).unsqueeze(1)
+            next_q_values = self.target_net(next_state_batch).gather(1, next_actions).squeeze(1)
             target_q_values = reward_batch + (1 - done_batch) * GAMMA * next_q_values
 
         td_errors = q_values - target_q_values
@@ -290,7 +292,7 @@ class DQNAgent:
 
         self.optimizer.zero_grad()
         loss.backward()
-        total_norm = utils.clip_grad_norm_(self.eval_net.parameters(), max_norm=10)
+        total_norm = utils.clip_grad_norm_(self.eval_net.parameters(), max_norm=1)
         self.optimizer.step()
 
         self.log_metrics(loss, reward_batch, q_values, target_q_values, total_norm)

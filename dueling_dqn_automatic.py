@@ -5,7 +5,7 @@ import logging
 import torch.nn.functional as F
 from input_keys import clear_action_state, attack
 from dueling_dqn_manual import keyboard_result, mouse_result, start_listeners
-from dueling_dqn import DQNAgent, SMALL_BATCH_SIZE
+from dueling_dqn import DQNAgent, BIG_BATCH_SIZE
 from tool_manager import ToolManager
 from game_control import take_action, pause_game, restart
 from grab_screen import grab_full_screen, grab_region, extract_health, extract_posture, get_remaining_uses
@@ -113,7 +113,7 @@ class GameAgent:
     def __init__(self, input_channels=3, action_space=8, model_file="./models/dueling_dqn_trained_episode_120.pth",
                  model_folder="./models"):
         self.dqn_agent = DQNAgent(input_channels, action_space, model_file, model_folder)
-        self.TRAIN_BATCH_SIZE = SMALL_BATCH_SIZE
+        self.TRAIN_BATCH_SIZE = BIG_BATCH_SIZE
 
     def choose_action(self, state, action_mask):
         return self.dqn_agent.choose_action(state, action_mask)
@@ -157,13 +157,16 @@ class GameController:
         self.env.set_tool_manager(self.tool_manager)
         self.agent = GameAgent()
         self.reward_weights = {
-            'self_hp_loss': -0.2,
-            'boss_hp_loss': 0.7,
-            'self_death': -15,
-            'self_posture_increase': -0.2,
-            'boss_posture_increase': 0.3,
-            'defeat_bonus': 30
+            'self_hp_loss': -1.0,
+            'boss_hp_loss': 1.0,
+            'self_death': -20,
+            'self_posture_increase': -0.6,
+            'boss_posture_increase': 0.6,
+            'defeat_bonus': 50,
+            'survival_reward': 0.1,
+            'successful_defense': 1.0,
         }
+
         self.reward_type_distribution = {
             'self_hp_loss': [],
             'boss_hp_loss': [],
@@ -179,32 +182,53 @@ class GameController:
         self.defeat_window_start = None
         self.phase_transition_detected = False
 
-        if state_obj.next_features['self_hp'] <= 0.1:
-            reward += self.reward_weights['self_death']
-            self.current_reward_types['self_death'] += self.reward_weights['self_death']
-            defeated = 1
+        survival_reward = self.reward_weights['survival_reward']
+        reward += survival_reward
+        self.current_reward_types['survival_reward'] += survival_reward
 
-        elif state_obj.next_features['boss_hp'] <= 0.1:
-            reward, defeated = self.handle_boss_low_health(state_obj)
-
+        if self.check_successful_defense(state_obj):
+            defense_reward = self.reward_weights['successful_defense']
+            reward += defense_reward
+            self.current_reward_types['successful_defense'] += defense_reward
         else:
-            reward += self.calculate_deltas(state_obj)
+            defense_reward = 0
+
+        if state_obj.next_features['self_hp'] <= 0.1:
+            death_penalty = self.reward_weights['self_death']
+            reward += death_penalty
+            self.current_reward_types['self_death'] += death_penalty
+            defeated = 1
+        elif state_obj.next_features['boss_hp'] <= 0.1:
+            defeat_reward, defeated = self.handle_boss_low_health(state_obj)
+            reward += defeat_reward
+        else:
+            delta_reward = self.calculate_deltas(state_obj)
+            reward += delta_reward
 
         self.total_reward += reward
-        logging.info(f'Current reward: {reward:.2f}, Total accumulated reward: {self.total_reward:.2f}')
         return reward, defeated
+
+    @staticmethod
+    def check_successful_defense(state_obj):
+        hp_delta = state_obj.next_features['self_hp'] - state_obj.current_features['self_hp']
+        posture_delta = state_obj.next_features['self_posture'] - state_obj.current_features['self_posture']
+
+        if hp_delta < 1 and posture_delta > 0:
+            return True
+        else:
+            return False
 
     def handle_boss_low_health(self, state_obj):
         if self.defeat_count >= 2:
             reward = self.reward_weights['defeat_bonus']
             self.current_reward_types['defeat_bonus'] += reward
             self.defeated = 2
-            print("Boss 最终阶段被击败，游戏结束")
+            print("Boss defeated in final stage, game over")
             self.defeat_window_start = None
         else:
             if not self.defeat_window_start:
                 self.defeat_window_start = time.time()
-            print("Boss 血量 <= 0，尝试击杀")
+            print("Boss HP <= 0, attempting to kill")
             reward = self.attack_in_low_health_phase(state_obj)
             self.defeated = 0
         return reward, self.defeated
@@ -219,16 +243,15 @@ class GameController:
                 self.current_reward_types['defeat_bonus'] += reward
                 self.defeat_count += 1
                 self.phase_transition_detected = True
-                print(f"Boss 血量恢复至 50% 以上，进入下一阶段：{self.defeat_count}")
+                print(f"Boss HP restored above 50%, entering next phase: {self.defeat_count}")
                 self.defeat_window_start = None
         else:
             if time_elapsed < 8:
                 attack()
-                print("继续攻击 Boss，确保击败...")
+                print("Continuing to attack Boss, ensuring defeat...")
             else:
                 self.defeat_window_start = None
                 self.phase_transition_detected = False
-
         return reward
 
     def calculate_deltas(self, state_obj):
@@ -236,21 +259,41 @@ class GameController:
         deltas = {key: state_obj.next_features[key] - state_obj.current_features[key] for key in keys}
         reward = 0
 
-        if deltas['self_hp'] < -6:
-            reward += self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
-            self.current_reward_types['self_hp_loss'] += self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
+        if deltas['self_hp'] < 0:
+            self_hp_loss = self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
+            reward += self_hp_loss
+            self.current_reward_types['self_hp_loss'] += self_hp_loss
+        else:
+            self_hp_loss = 0
 
-        if deltas['boss_hp'] < -3:
-            reward += self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
-            self.current_reward_types['boss_hp_loss'] += self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
+        if deltas['boss_hp'] < 0:
+            boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
+            reward += boss_hp_reward
+            self.current_reward_types['boss_hp_loss'] += boss_hp_reward
+        else:
+            boss_hp_reward = 0
 
-        if deltas['self_posture'] > 6 and state_obj.next_features["self_posture"] > 80:
-            reward += self.reward_weights['self_posture_increase'] * deltas['self_posture']
-            self.current_reward_types['self_posture_increase'] += self.reward_weights['self_posture_increase'] * deltas['self_posture']
+        if deltas['self_posture'] > 0 and state_obj.current_features['self_posture'] > 80:
+            self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
+            reward += self_posture_penalty
+            self.current_reward_types['self_posture_increase'] += self_posture_penalty
+        else:
+            self_posture_penalty = 0
 
-        if deltas['boss_posture'] > 3:
-            reward += self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
-            self.current_reward_types['boss_posture_increase'] += self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
+        if deltas['boss_posture'] > 0:
+            boss_posture_reward = self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
+            reward += boss_posture_reward
+            self.current_reward_types['boss_posture_increase'] += boss_posture_reward
+        else:
+            boss_posture_reward = 0
+
+        logging.info(
+            f"步骤 {self.env.target_step}: 奖励细节 - "
+            f"自身体力损失惩罚: {self_hp_loss:.2f}, "
+            f"Boss体力损失奖励: {boss_hp_reward:.2f}, "
+            f"自身姿势增加惩罚: {self_posture_penalty:.2f}, "
+            f"Boss姿势增加奖励: {boss_posture_reward:.2f}"
+        )
 
         return reward
 
@@ -258,10 +301,11 @@ class GameController:
         for key in self.reward_type_distribution:
             self.reward_type_distribution[key].append(self.current_reward_types.get(key, 0))
 
-        reward_summary = f"Episode {episode + 1} Summary: Total Reward: {self.total_reward:.2f} | " + \
-                         " | ".join([f"{key}: {value:.2f}" for key, value in self.current_reward_types.items()])
+        reward_details = " | ".join([f"{key}: {value:.2f}" for key, value in self.current_reward_types.items()])
+        reward_summary = f"第 {episode + 1} 回合总结: 总奖励: {self.total_reward:.2f} | {reward_details}"
 
         print(reward_summary)
+        logging.info(reward_summary)
 
         self.total_reward = 0
         self.current_reward_types = {key: 0 for key in self.reward_weights}
@@ -326,14 +370,15 @@ class GameController:
                     self.env.heal_count -= 1
                     self.env.heal_cooldown = 15
                     if state_obj.current_features['self_hp'] < 50:
-                        reward += 3
+                        reward += 2
                     else:
-                        reward -= 7
+                        reward -= 5
 
                 if action is not None:
-                    self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state, self.defeated)
+                    self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,
+                                                self.defeated)
 
-                if self.env.target_step % self.agent.TRAIN_BATCH_SIZE == 0:
+                if self.env.target_step % (self.agent.TRAIN_BATCH_SIZE / 2) == 0:
                     self.agent.train()
 
                 if self.defeated:
