@@ -1,5 +1,4 @@
 import os
-import time
 import random
 import torch
 import torch.nn as nn
@@ -21,7 +20,7 @@ BATCH_SIZE_DOOR = 1000
 GAMMA = 0.99
 INITIAL_EPSILON = 1.0
 FINAL_EPSILON = 0.01
-EPSILON_DECAY = 100000
+EPSILON_DECAY = 50000
 LR = 1e-3
 ALPHA = 0.6
 BETA_START = 0.4

@@ -44,19 +44,19 @@ class Input(ctypes.Structure):
 
 def left_click():
     mouse_action(MOUSE_CODES['LEFT_CLICK'])
-    time.sleep(0.08)
+    time.sleep(0.05)
     mouse_action(MOUSE_CODES['LEFT_RELEASE'])
 
 
 def right_click():
     mouse_action(MOUSE_CODES['RIGHT_CLICK'])
-    time.sleep(0.08)
+    time.sleep(0.05)
     mouse_action(MOUSE_CODES['RIGHT_RELEASE'])
 
 
 def middle_click():
     mouse_action(MOUSE_CODES['MIDDLE_CLICK'])
-    time.sleep(0.1)
+    time.sleep(0.05)
     mouse_action(MOUSE_CODES['MIDDLE_RELEASE'])
 
 
