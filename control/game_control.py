@@ -1,6 +1,6 @@
 import time
-import input_keys
 import pygetwindow as gw
+from keys import input_keys
 
 
 def take_action(action_index, debugged, tool_manager):

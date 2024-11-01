@@ -1,5 +1,5 @@
-from input_keys import perform_action
 import time
+from keys.input_keys import perform_action
 
 
 class ToolManager:

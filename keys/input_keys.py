@@ -1,8 +1,8 @@
 import ctypes
 import time
 import win32api as wapi
-from keys_dictionary import KEY_CODES
-from keys_dictionary import MOUSE_CODES
+from .keys_dictionary import KEY_CODES
+from .keys_dictionary import MOUSE_CODES
 
 SendInput = ctypes.windll.user32.SendInput
 PUL = ctypes.POINTER(ctypes.c_ulong)

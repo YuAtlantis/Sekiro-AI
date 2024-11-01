@@ -1,144 +1,24 @@
+# game_controller.py
+
 import cv2
-import time
-import torch
 import logging
-import torch.nn.functional as F
+import time
+from game_environment import GameEnvironment
+from game_agent import GameAgent
+from game_state import GameState
+from control.tool_manager import ToolManager
 from keys.input_keys import clear_action_state, attack
 from control.dueling_dqn_manual import keyboard_result, mouse_result, start_listeners
-from dqn.dueling_dqn import DQNAgent, BIG_BATCH_SIZE
-from control.tool_manager import ToolManager
 from control.game_control import take_action, pause_game, restart
+from logging.handlers import RotatingFileHandler
 
-from cv.health_posture import extract_health, extract_posture
-from cv.ocr_utils import get_remaining_uses
-from cv.screen_capture import grab_full_screen, grab_region
-
-logging.basicConfig(level=logging.INFO)
-
-
-class GameEnvironment:
-    def __init__(self, width=128, height=128, episodes=3000):
-        self.width = width
-        self.height = height
-        self.episodes = episodes
-        self.regions = {
-            'game_window': (220, 145, 800, 530),
-            'self_blood': (55, 562, 399, 576),
-            'boss_blood': (57, 92, 290, 106),
-            'self_posture': (395, 535, 635, 552),
-            'boss_posture': (315, 73, 710, 88),
-            'remaining_uses': (955, 570, 971, 588)
-        }
-        self.paused = True
-        self.manual = False
-        self.debugged = False
-        self.tool_manager = None
-        self.single_life_boss = True
-        self.self_stop_mark = 0
-        self.target_step = 0
-        self.heal_cooldown = 5
-        self.heal_count = 9999
-        self.action_space_size = 8
-        self.current_remaining_uses = 19
-
-    def grab_screens(self):
-        full_screen_img = grab_full_screen()
-        screens = {key: grab_region(full_screen_img, region) for key, region in self.regions.items()}
-        remaining_uses_img = screens.pop('remaining_uses', None)
-        game_window_img = screens.pop('game_window')
-        return game_window_img, screens, remaining_uses_img
-
-    @staticmethod
-    def extract_features(screens):
-        self_blood, boss_blood = extract_health(
-            screens['self_blood'], screens['boss_blood'])
-        self_posture, boss_posture = extract_posture(
-            screens['self_posture'], screens['boss_posture'])
-        return {'self_hp': self_blood, 'boss_hp': boss_blood,
-                'self_posture': self_posture, 'boss_posture': boss_posture}
-
-    def resize_screen(self, img):
-        img_tensor = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float().cuda()
-        resized_img = F.interpolate(img_tensor, size=(self.height, self.width), mode='bilinear',
-                                    align_corners=False)
-        resized_img = resized_img.squeeze(0).cpu().numpy()
-        return resized_img
-
-    @staticmethod
-    def prepare_state(img):
-        """Prepare the state tensor for the DQN agent."""
-        img_tensor = torch.from_numpy(img).float() / 255.0  # [C, H, W]
-        img_tensor = img_tensor.unsqueeze(0).to('cpu')  # [1, C, H, W]
-
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(img_tensor.device)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(img_tensor.device)
-
-        img_tensor = (img_tensor - mean) / std
-        img_tensor = img_tensor.squeeze(0)  # [C, H, W]
-
-        return img_tensor
-
-    def reset_marks(self):
-        self.self_stop_mark = 0
-        self.target_step = 0
-        self.heal_count = 9999
-
-    def get_action_mask(self):
-        action_mask = [1] * self.action_space_size
-        if self.tool_manager.tools_exhausted:
-            action_mask[5] = action_mask[6] = action_mask[7] = 0
-        else:
-            remaining_cooldowns = self.tool_manager.get_remaining_cooldown()
-            for i in range(3):
-                if remaining_cooldowns[i] > 0:
-                    action_mask[5 + i] = 0
-        if self.heal_count == 0 or self.heal_cooldown > 0:
-            action_mask[4] = 0
-        return action_mask
-
-    def set_tool_manager(self, tool_manager):
-        self.tool_manager = tool_manager
-
-    def update_remaining_uses(self, remaining_uses_img):
-        self.current_remaining_uses = get_remaining_uses(remaining_uses_img, self.current_remaining_uses)
-        if hasattr(self.tool_manager, 'remaining_uses'):
-            self.tool_manager.remaining_uses = self.current_remaining_uses
-
-
-class GameAgent:
-    def __init__(self, input_channels=3, action_space=8, model_file="./models/dueling_dqn_trained_episode_120.pth",
-                 model_folder="./models"):
-        self.dqn_agent = DQNAgent(input_channels, action_space, model_file, model_folder)
-        self.TRAIN_BATCH_SIZE = BIG_BATCH_SIZE
-
-    def choose_action(self, state, action_mask):
-        return self.dqn_agent.choose_action(state, action_mask)
-
-    def store_transition(self, *args):
-        self.dqn_agent.store_transition(*args)
-
-    def train(self):
-        self.dqn_agent.train(self.TRAIN_BATCH_SIZE)
-
-    def update_target_network(self):
-        self.dqn_agent.update_target_network()
-
-    def save_model(self, episode):
-        self.dqn_agent.save_model(episode)
-
-
-class GameState:
-    def __init__(self, features, state):
-        self.current_features = features
-        self.next_features = features.copy()
-        self.current_state = state
-        self.next_state = state.clone()
-
-    def update(self, features, state):
-        self.current_features = self.next_features.copy()
-        self.next_features = features.copy()
-        self.current_state = self.next_state.clone()
-        self.next_state = state.clone()
+# Configure logging with rotating file handler
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+handler = RotatingFileHandler('game_controller.log', maxBytes=10*1024*1024, backupCount=5)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 class GameController:
@@ -175,21 +55,23 @@ class GameController:
         self.current_reward_types = {key: 0 for key in self.reward_weights}
 
     def action_judge(self, state_obj):
+        """Judge the action and calculate the reward."""
         reward, defeated = 0, 0
         self.defeat_window_start = None
         self.phase_transition_detected = False
 
+        # Survival reward
         survival_reward = self.reward_weights['survival_reward']
         reward += survival_reward
         self.current_reward_types['survival_reward'] += survival_reward
 
+        # Successful defense
         if self.check_successful_defense(state_obj):
             defense_reward = self.reward_weights['successful_defense']
             reward += defense_reward
             self.current_reward_types['successful_defense'] += defense_reward
-        else:
-            defense_reward = 0
 
+        # Death or defeat
         if state_obj.next_features['self_hp'] <= 0.1:
             death_penalty = self.reward_weights['self_death']
             reward += death_penalty
@@ -199,6 +81,7 @@ class GameController:
             defeat_reward, defeated = self.handle_boss_low_health(state_obj)
             reward += defeat_reward
         else:
+            # Calculate deltas and corresponding rewards
             delta_reward = self.calculate_deltas(state_obj)
             reward += delta_reward
 
@@ -207,42 +90,40 @@ class GameController:
 
     @staticmethod
     def check_successful_defense(state_obj):
+        """Check if a successful defense occurred."""
         hp_delta = state_obj.next_features['self_hp'] - state_obj.current_features['self_hp']
         posture_delta = state_obj.next_features['self_posture'] - state_obj.current_features['self_posture']
-
-        if hp_delta < 1 and posture_delta > 0:
-            return True
-        else:
-            return False
+        return hp_delta < 1 and posture_delta > 0
 
     def handle_boss_low_health(self, state_obj):
+        """Handle the scenario when the boss's health is low."""
         if self.defeat_count >= 2 or self.env.single_life_boss:
             reward = self.reward_weights['defeat_bonus']
             self.current_reward_types['defeat_bonus'] += reward
             self.defeated = 2
-            print("Boss defeated, game_settings over")
+            logger.info("Boss defeated, game_settings over")
             self.defeat_window_start = None
         else:
             if not self.defeat_window_start:
                 self.defeat_window_start = time.time()
-            print("Boss HP <= 0, attempting to kill")
+            logger.info("Boss HP <= 0, attempting to kill")
             reward = self.attack_in_low_health_phase(state_obj)
             self.defeated = 0
         return reward, self.defeated
 
     def attack_in_low_health_phase(self, state_obj):
+        """Attack during the boss's low health phase."""
         reward = 0
         time_elapsed = time.time() - self.defeat_window_start if self.defeat_window_start else 0
 
-        if self.env.single_life_boss:
-            self.missing_boss_hp_steps += 1
-        elif state_obj.next_features['boss_hp'] <= 0.1:
+        # Increment missing boss HP steps
+        if self.env.single_life_boss or state_obj.next_features['boss_hp'] <= 0.1:
             self.missing_boss_hp_steps += 1
         else:
             self.missing_boss_hp_steps = 0
 
         if self.missing_boss_hp_steps > 256:
-            print("Boss血条已消失，停止游戏")
+            logger.info("Boss HP has disappeared, stopping game_settings")
             self.defeated = 2
             return reward
 
@@ -252,22 +133,24 @@ class GameController:
                 self.current_reward_types['defeat_bonus'] += reward
                 self.defeat_count += 1
                 self.phase_transition_detected = True
-                print(f"Boss HP restored above 50%, entering next phase: {self.defeat_count}")
+                logger.info(f"Boss HP restored above 50%, entering next phase: {self.defeat_count}")
                 self.defeat_window_start = None
         else:
             if time_elapsed < 8:
                 attack()
-                print("Continuing to attack Boss, ensuring defeat...")
+                logger.info("Continuing to attack Boss, ensuring defeat...")
             else:
                 self.defeat_window_start = None
                 self.phase_transition_detected = False
         return reward
 
     def calculate_deltas(self, state_obj):
+        """Calculate the reward based on the changes in features."""
         keys = ['self_hp', 'boss_hp', 'self_posture', 'boss_posture']
         deltas = {key: state_obj.next_features[key] - state_obj.current_features[key] for key in keys}
         reward = 0
 
+        # Self HP loss penalty
         if deltas['self_hp'] < 0:
             self_hp_loss = self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
             reward += self_hp_loss
@@ -275,6 +158,7 @@ class GameController:
         else:
             self_hp_loss = 0
 
+        # Boss HP loss reward
         if deltas['boss_hp'] < 0:
             boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
             reward += boss_hp_reward
@@ -282,6 +166,7 @@ class GameController:
         else:
             boss_hp_reward = 0
 
+        # Self posture increase penalty
         if deltas['self_posture'] > 0 and state_obj.current_features['self_posture'] > 80:
             self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
             reward += self_posture_penalty
@@ -289,6 +174,7 @@ class GameController:
         else:
             self_posture_penalty = 0
 
+        # Boss posture increase reward
         if deltas['boss_posture'] > 0:
             boss_posture_reward = self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
             reward += boss_posture_reward
@@ -296,25 +182,25 @@ class GameController:
         else:
             boss_posture_reward = 0
 
-        logging.info(
-            f"步骤 {self.env.target_step}: 奖励细节 - "
-            f"自身体力损失惩罚: {self_hp_loss:.2f}, "
-            f"Boss体力损失奖励: {boss_hp_reward:.2f}, "
-            f"自身姿势增加惩罚: {self_posture_penalty:.2f}, "
-            f"Boss姿势增加奖励: {boss_posture_reward:.2f}"
+        logger.info(
+            f"Step {self.env.target_step}: Reward Details - "
+            f"Self HP Loss Penalty: {self_hp_loss:.2f}, "
+            f"Boss HP Loss Reward: {boss_hp_reward:.2f}, "
+            f"Self Posture Increase Penalty: {self_posture_penalty:.2f}, "
+            f"Boss Posture Increase Reward: {boss_posture_reward:.2f}"
         )
 
         return reward
 
     def post_episode_updates(self, episode):
+        """Update statistics and save models after each episode."""
         for key in self.reward_type_distribution:
             self.reward_type_distribution[key].append(self.current_reward_types.get(key, 0))
 
         reward_details = " | ".join([f"{key}: {value:.2f}" for key, value in self.current_reward_types.items()])
-        reward_summary = f"第 {episode + 1} 回合总结: 总奖励: {self.total_reward:.2f} | {reward_details}"
+        reward_summary = f"Episode {episode + 1} Summary: Total Reward: {self.total_reward:.2f} | {reward_details}"
 
-        print(reward_summary)
-        logging.info(reward_summary)
+        logger.info(reward_summary)
 
         self.total_reward = 0
         self.current_reward_types = {key: 0 for key in self.reward_weights}
@@ -325,9 +211,10 @@ class GameController:
             self.agent.save_model(episode)
 
     def run(self):
+        """Run the main game_settings loop."""
         if self.env.manual:
             start_listeners()
-        print("Press 'T' to start the screen capture")
+        logger.info("Press 'T' to start the screen capture")
         for episode in range(self.env.episodes):
             self.env.reset_marks()
             self.env.paused = pause_game(self.env.paused)
@@ -335,6 +222,9 @@ class GameController:
             last_time = time.time()
 
             game_window_img, screens, remaining_uses_img = self.env.grab_screens()
+            if game_window_img is None:
+                logger.warning("Failed to capture screen, skipping iteration.")
+                continue
             features = self.env.extract_features(screens)
             resized_img = self.env.resize_screen(game_window_img)
             state = self.env.prepare_state(resized_img)
@@ -343,11 +233,10 @@ class GameController:
             while True:
                 self.env.target_step += 1
                 self.env.paused = pause_game(self.env.paused)
-                cv2.waitKey(1)
 
                 if self.env.target_step % 10 == 0:
                     processing_time = time.time() - last_time
-                    logging.info(f'Processing time: {processing_time:.2f}s in episode {episode}')
+                    logger.info(f'Processing time: {processing_time:.2f}s in episode {episode}')
                     last_time = time.time()
 
                 if self.env.heal_cooldown > 0:
@@ -364,6 +253,9 @@ class GameController:
                     take_action(action, self.env.debugged, self.tool_manager)
 
                 game_window_img, screens, remaining_uses_img = self.env.grab_screens()
+                if game_window_img is None:
+                    logger.warning("Failed to capture screen, skipping action.")
+                    continue
 
                 if self.env.target_step % 10 == 0:
                     self.env.update_remaining_uses(remaining_uses_img)
@@ -401,11 +293,9 @@ class GameController:
 
     @staticmethod
     def get_manual_action():
+        """Retrieve manual action from keyboard or mouse input."""
         if keyboard_result is not None:
             return keyboard_result
         elif mouse_result is not None:
             return mouse_result
-
-
-if __name__ == '__main__':
-    GameController().run()
+        return None
