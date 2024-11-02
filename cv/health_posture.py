@@ -3,10 +3,60 @@
 import cv2
 import numpy as np
 import logging
+from numba import njit
 
 logging.basicConfig(level=logging.INFO)
 
 DEBUG_MODE = False  # Set to True to enable debugging visuals
+
+HEALTH_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+POSTURE_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+
+
+@njit
+def compute_health_percentage(w, total_width):
+    """
+    Compute the health percentage based on width and total width.
+
+    Args:
+        w (float): Width of the health bar.
+        total_width (float): Total possible width of the health bar.
+
+    Returns:
+        float: Health percentage (0 to 100).
+    """
+    health_percentage = (w / total_width) * 100
+    if health_percentage < 0:
+        health_percentage = 0.0
+    elif health_percentage > 100:
+        health_percentage = 100.0
+    return health_percentage
+
+
+@njit
+def compute_posture_percentage(indices, max_profile, total_width):
+    """
+    Compute the posture percentage based on indices and maximum profile value.
+
+    Args:
+        indices (1D array): Indices where profile > threshold.
+        max_profile (float): Maximum value in the profile.
+        total_width (float): Total possible width of the posture bar.
+
+    Returns:
+        float: Posture percentage (0 to 100).
+    """
+    threshold = max_profile * 0.3
+    if indices.size > 0:
+        posture_bar_length = indices[-1] - indices[0]
+        posture_percentage = (posture_bar_length / total_width) * 100
+        if posture_percentage < 0:
+            posture_percentage = 0.0
+        elif posture_percentage > 100:
+            posture_percentage = 100.0
+    else:
+        posture_percentage = 0.0
+    return posture_percentage
 
 
 def calculate_health_percentage(health_bar_image):
@@ -33,9 +83,7 @@ def calculate_health_percentage(health_bar_image):
     mask = cv2.bitwise_or(mask1, mask2)
 
     # Apply morphological operations to clean the mask
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-    mask = cv2.GaussianBlur(mask, (5, 5), 0)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, HEALTH_KERNEL, iterations=2)
 
     # Apply adaptive threshold
     _, binary_mask = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -47,10 +95,9 @@ def calculate_health_percentage(health_bar_image):
         # Assume the largest contour is the health bar
         largest_contour = max(contours, key=cv2.contourArea)
         _, _, w, _ = cv2.boundingRect(largest_contour)
-        health_percentage = (w / binary_mask.shape[1]) * 100
-        health_percentage = np.clip(health_percentage, 0, 100)
+        health_percentage = compute_health_percentage(w, binary_mask.shape[1])
     else:
-        health_percentage = 0
+        health_percentage = 0.0
 
     if DEBUG_MODE:
         cv2.imshow('Health Mask', mask)
@@ -75,21 +122,15 @@ def calculate_posture_percentage(posture_bar_image):
     upper_color = np.array([35, 255, 255])
 
     mask = cv2.inRange(hsv, lower_color, upper_color)
-    mask = cv2.GaussianBlur(mask, (3, 3), 0)
+
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, POSTURE_KERNEL, iterations=2)
 
     # Project the mask along the vertical axis to get a horizontal profile
     profile = np.sum(mask, axis=0)
 
-    # Dynamic threshold based on 30% of the maximum profile value
-    threshold = np.max(profile) * 0.3
-    indices = np.where(profile > threshold)[0]
-
-    if len(indices) > 0:
-        posture_bar_length = indices[-1] - indices[0]
-        posture_percentage = (posture_bar_length / mask.shape[1]) * 100
-        posture_percentage = np.clip(posture_percentage, 0, 100)
-    else:
-        posture_percentage = 0
+    # Use Numba-accelerated function to compute posture percentage
+    indices = np.where(profile > (np.max(profile) * 0.3))[0]
+    posture_percentage = compute_posture_percentage(indices, np.max(profile), mask.shape[1])
 
     if DEBUG_MODE:
         cv2.imshow('Posture Mask', mask)
@@ -133,8 +174,6 @@ def extract_posture(player_posture_img, boss_posture_img):
     """
     player_posture = calculate_posture_percentage(player_posture_img)
     boss_posture = calculate_posture_percentage(boss_posture_img)
-
-    logging.info(f'Player Posture: {player_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
 
     if DEBUG_MODE:
         cv2.imshow('Player Posture Bar', player_posture_img)

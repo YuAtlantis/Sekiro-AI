@@ -1,66 +1,58 @@
-# main.py
-
-import cv2
+import concurrent.futures
 import logging
-from screen_capture import grab_full_screen, grab_region
+import cv2
+import time
+from screen_capture import grab_region, grab_full_screen
 from health_posture import extract_health, extract_posture
-from ocr_utils import get_remaining_uses
 
 logging.basicConfig(level=logging.INFO)
 
-DEBUG_MODE = False  # Set to True to enable debugging visuals
-
 
 def main():
-    """
-    Main function to run the screen monitoring application.
-    """
     regions = {
         'self_blood': (54, 562, 400, 576),
         'boss_blood': (57, 93, 288, 105),
         'self_posture': (395, 535, 635, 552),
-        'boss_posture': (315, 73, 710, 88),
-        'remaining_uses': (955, 570, 970, 588)
+        'boss_posture': (315, 73, 710, 88)
     }
 
-    current_remaining_uses = 19
+    log_interval = 2  # 日志输出间隔（秒）
+    last_log_time = time.time()  # 初始化上次日志记录的时间
 
-    while True:
-        try:
-            # Capture the full screen
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        while True:
+            # Capture a single frame
             full_screen_img = grab_full_screen()
 
-            # Extract all necessary regions
-            screens = {name: grab_region(full_screen_img, region) for name, region in regions.items()}
+            # Extract images for each region from the same frame
+            self_blood_img = grab_region(full_screen_img, regions['self_blood'])
+            boss_blood_img = grab_region(full_screen_img, regions['boss_blood'])
+            self_posture_img = grab_region(full_screen_img, regions['self_posture'])
+            boss_posture_img = grab_region(full_screen_img, regions['boss_posture'])
 
-            # Extract health percentages for the player and the boss
-            self_health, boss_health = extract_health(
-                screens['self_blood'], screens['boss_blood'])
+            # Submit health and posture extraction tasks
+            health_future = executor.submit(extract_health, self_blood_img, boss_blood_img)
+            posture_future = executor.submit(extract_posture, self_posture_img, boss_posture_img)
 
-            # Extract posture percentages for the player and the boss
-            self_posture, boss_posture = extract_posture(
-                screens['self_posture'], screens['boss_posture'])
+            # Wait for both tasks to complete
+            self_health, boss_health = health_future.result()
+            self_posture, boss_posture = posture_future.result()
 
-            # Get remaining uses using OCR
-            current_remaining_uses = get_remaining_uses(
-                screens['remaining_uses'], current_remaining_uses)
+            # Check if the log interval has passed
+            current_time = time.time()
+            if current_time - last_log_time >= log_interval:
+                # Log the results together in one line
+                logging.info(f'Player Health: {self_health:.2f}%, Boss Health: {boss_health:.2f}%, '
+                             f'Player Posture: {self_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
 
-            if DEBUG_MODE:
-                # Additional debugging visuals can be handled within modules
-                pass
+                # Update the last log time
+                last_log_time = current_time
 
-            # Exit condition: press 'q' to quit
+            # Exit condition
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 logging.info('Exit signal received. Exiting...')
                 break
 
-        except KeyboardInterrupt:
-            logging.info('Program interrupted by user. Exiting...')
-            break
-        except Exception as e:
-            logging.error(f'An error occurred: {e}')
-
-    # Clean up OpenCV windows
     cv2.destroyAllWindows()
 
 

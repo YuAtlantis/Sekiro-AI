@@ -15,7 +15,7 @@ from logging.handlers import RotatingFileHandler
 # Configure logging with rotating file handler
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-handler = RotatingFileHandler('game_controller.log', maxBytes=10*1024*1024, backupCount=5)
+handler = RotatingFileHandler('./logs/game_controller.log', maxBytes=10*1024*1024, backupCount=5)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
@@ -72,12 +72,12 @@ class GameController:
             self.current_reward_types['successful_defense'] += defense_reward
 
         # Death or defeat
-        if state_obj.next_features['self_hp'] <= 0.1:
+        if state_obj.next_features['self_hp'] <= 1:
             death_penalty = self.reward_weights['self_death']
             reward += death_penalty
             self.current_reward_types['self_death'] += death_penalty
             defeated = 1
-        elif state_obj.next_features['boss_hp'] <= 0.1:
+        elif state_obj.next_features['boss_hp'] <= 1:
             defeat_reward, defeated = self.handle_boss_low_health(state_obj)
             reward += defeat_reward
         else:
@@ -117,7 +117,7 @@ class GameController:
         time_elapsed = time.time() - self.defeat_window_start if self.defeat_window_start else 0
 
         # Increment missing boss HP steps
-        if self.env.single_life_boss or state_obj.next_features['boss_hp'] <= 0.1:
+        if self.env.single_life_boss or state_obj.next_features['boss_hp'] <= 1:
             self.missing_boss_hp_steps += 1
         else:
             self.missing_boss_hp_steps = 0
@@ -279,7 +279,7 @@ class GameController:
                     self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,
                                                 self.defeated)
 
-                if self.env.target_step % 64 == 0:
+                if self.env.target_step % 32 == 0:
                     self.agent.train()
 
                 if self.defeated:
