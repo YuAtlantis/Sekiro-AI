@@ -38,21 +38,16 @@ def focus_game_window():
 
 def restart(env, defeated, defeat_count):
     def reset_actions_and_pause():
-        input_keys.clear_action_state()
         pause_game(True)
 
     def restart_sequence():
-        print("-------------------------You are dead and we are restarting a new round-------------------------")
-        input_keys.clear_action_state()
-        print("-------------------------Waiting for 6 seconds before lock vision-------------------------")
-        time.sleep(6)
+        print("-------------------------Waiting for 9 seconds to restart the game-------------------------")
+        time.sleep(8)
         focus_game_window()
-        time.sleep(1)
         input_keys.lock_vision()
-        time.sleep(2)
-        print("-------------------------Restart the fighting now by left click mouse-------------------------")
+        time.sleep(0.1)
         input_keys.attack()
-        time.sleep(2)
+        time.sleep(1)
 
     if defeated == 1:
         if env.manual:
@@ -68,7 +63,7 @@ def restart(env, defeated, defeat_count):
 def pause_game(paused):
     while True:
         keys = input_keys.key_check()
-        if 'T' in keys:
+        if 'P' in keys:
             paused = not paused
             print('Game paused' if paused else 'Game started')
             wait_before_start(3, paused)

@@ -29,7 +29,6 @@ class GameEnvironment:
         self.manual = False
         self.debugged = False
         self.tool_manager = None
-        self.single_life_boss = True
         self.self_stop_mark = 0
         self.target_step = 0
         self.heal_cooldown = 5

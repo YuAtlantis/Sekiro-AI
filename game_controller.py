@@ -7,7 +7,7 @@ from game_environment import GameEnvironment
 from game_agent import GameAgent
 from game_state import GameState
 from control.tool_manager import ToolManager
-from keys.input_keys import clear_action_state, attack
+from keys.input_keys import attack
 from control.dueling_dqn_manual import keyboard_result, mouse_result, start_listeners
 from control.game_control import take_action, pause_game, restart
 from logging.handlers import RotatingFileHandler
@@ -34,14 +34,14 @@ class GameController:
         self.env.set_tool_manager(self.tool_manager)
         self.agent = GameAgent()
         self.reward_weights = {
-            'self_hp_loss': -1.0,
-            'boss_hp_loss': 1.0,
-            'self_death': -20,
-            'self_posture_increase': -0.6,
+            'self_hp_loss': -0.3,
+            'boss_hp_loss': 0.9,
+            'self_death': -15,
+            'self_posture_increase': -0.2,
             'boss_posture_increase': 0.6,
-            'defeat_bonus': 50,
+            'defeat_bonus': 40,
             'survival_reward': 0.1,
-            'successful_defense': 1.0,
+            'successful_defense': 0.8,
         }
 
         self.reward_type_distribution = {
@@ -97,18 +97,22 @@ class GameController:
 
     def handle_boss_low_health(self, state_obj):
         """Handle the scenario when the boss's health is low."""
-        if self.defeat_count >= 2 or self.env.single_life_boss:
-            reward = self.reward_weights['defeat_bonus']
-            self.current_reward_types['defeat_bonus'] += reward
+        if not self.defeat_window_start:
+            self.defeat_window_start = time.time()
+
+        logger.info("Boss HP <= 1, attempting to kill")
+
+        # 处理低血量 Boss 攻击逻辑
+        reward = self.attack_in_low_health_phase(state_obj)
+
+        # 检查是否达到了停止游戏的条件
+        if self.missing_boss_hp_steps > 256:
+            reward += self.reward_weights.get('defeat_bonus', 40)  # 可根据需要调整
             self.defeated = 2
-            logger.info("Boss defeated, game_settings over")
-            self.defeat_window_start = None
+            logger.info("Missing boss HP steps exceeded 256, stopping game.")
         else:
-            if not self.defeat_window_start:
-                self.defeat_window_start = time.time()
-            logger.info("Boss HP <= 0, attempting to kill")
-            reward = self.attack_in_low_health_phase(state_obj)
             self.defeated = 0
+
         return reward, self.defeated
 
     def attack_in_low_health_phase(self, state_obj):
@@ -116,25 +120,28 @@ class GameController:
         reward = 0
         time_elapsed = time.time() - self.defeat_window_start if self.defeat_window_start else 0
 
-        # Increment missing boss HP steps
-        if self.env.single_life_boss or state_obj.next_features['boss_hp'] <= 1:
+        # 增加 missing_boss_hp_steps，无论 Boss 是否为单命
+        if state_obj.next_features['boss_hp'] <= 0:
             self.missing_boss_hp_steps += 1
         else:
             self.missing_boss_hp_steps = 0
 
+        logger.debug(f"Missing Boss HP Steps: {self.missing_boss_hp_steps}")
+
+        # 检查是否超过 256 步
         if self.missing_boss_hp_steps > 256:
-            logger.info("Boss HP has disappeared, stopping game_settings")
+            logger.info("Boss HP has disappeared for over 256 steps, stopping game.")
             self.defeated = 2
             return reward
 
-        if not self.env.single_life_boss and state_obj.current_features['boss_hp'] > 50:
-            if not self.phase_transition_detected:
-                reward = self.reward_weights['defeat_bonus']
-                self.current_reward_types['defeat_bonus'] += reward
-                self.defeat_count += 1
-                self.phase_transition_detected = True
-                logger.info(f"Boss HP restored above 50%, entering next phase: {self.defeat_count}")
-                self.defeat_window_start = None
+        # 处理 Boss 血量恢复的情况
+        if state_obj.current_features['boss_hp'] > 50:
+            reward += self.reward_weights['defeat_bonus']
+            self.current_reward_types['defeat_bonus'] += self.reward_weights['defeat_bonus']
+            self.defeat_count += 1
+            self.phase_transition_detected = True
+            logger.info(f"Boss HP restored above 50%, entering next phase: {self.defeat_count}")
+            self.defeat_window_start = None
         else:
             if time_elapsed < 8:
                 attack()
@@ -142,6 +149,7 @@ class GameController:
             else:
                 self.defeat_window_start = None
                 self.phase_transition_detected = False
+
         return reward
 
     def calculate_deltas(self, state_obj):
@@ -205,8 +213,6 @@ class GameController:
         self.total_reward = 0
         self.current_reward_types = {key: 0 for key in self.reward_weights}
 
-        if episode % 10 == 0 and not self.env.debugged:
-            self.agent.update_target_network()
         if episode % 50 == 0 and not self.env.debugged:
             self.agent.save_model(episode)
 
@@ -214,17 +220,16 @@ class GameController:
         """Run the main game_settings loop."""
         if self.env.manual:
             start_listeners()
-        logger.info("Press 'T' to start the screen capture")
+        logger.info("Press 'P' to start the screen capture")
         for episode in range(self.env.episodes):
             self.env.reset_marks()
             self.env.paused = pause_game(self.env.paused)
-            clear_action_state()
-            last_time = time.time()
-
             game_window_img, screens, remaining_uses_img = self.env.grab_screens()
+
             if game_window_img is None:
                 logger.warning("Failed to capture screen, skipping iteration.")
                 continue
+
             features = self.env.extract_features(screens)
             resized_img = self.env.resize_screen(game_window_img)
             state = self.env.prepare_state(resized_img)
@@ -233,11 +238,6 @@ class GameController:
             while True:
                 self.env.target_step += 1
                 self.env.paused = pause_game(self.env.paused)
-
-                if self.env.target_step % 10 == 0:
-                    processing_time = time.time() - last_time
-                    logger.info(f'Processing time: {processing_time:.2f}s in episode {episode}')
-                    last_time = time.time()
 
                 if self.env.heal_cooldown > 0:
                     self.env.heal_cooldown -= 1
@@ -257,7 +257,7 @@ class GameController:
                     logger.warning("Failed to capture screen, skipping action.")
                     continue
 
-                if self.env.target_step % 10 == 0:
+                if self.env.target_step % 100 == 0:
                     self.env.update_remaining_uses(remaining_uses_img)
 
                 features = self.env.extract_features(screens)
@@ -269,11 +269,11 @@ class GameController:
 
                 if action == 4:
                     self.env.heal_count -= 1
-                    self.env.heal_cooldown = 15
+                    self.env.heal_cooldown = 8
                     if state_obj.current_features['self_hp'] < 50:
                         reward += 2
                     else:
-                        reward -= 5
+                        reward -= 4
 
                 if action is not None:
                     self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,
@@ -285,7 +285,6 @@ class GameController:
                 if self.defeated:
                     break
 
-            clear_action_state()
             self.post_episode_updates(episode)
             restart(self.env, self.defeated, self.defeat_count)
 
