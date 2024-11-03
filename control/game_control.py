@@ -45,7 +45,7 @@ def restart(env, defeated, defeat_count):
         time.sleep(8)
         focus_game_window()
         input_keys.lock_vision()
-        time.sleep(0.1)
+        time.sleep(2)
         input_keys.attack()
         time.sleep(1)
 

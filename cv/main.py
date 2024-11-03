@@ -16,8 +16,8 @@ def main():
         'boss_posture': (315, 73, 710, 88)
     }
 
-    log_interval = 2  # 日志输出间隔（秒）
-    last_log_time = time.time()  # 初始化上次日志记录的时间
+    log_interval = 2
+    last_log_time = time.time()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         while True:

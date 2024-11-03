@@ -35,13 +35,13 @@ class GameController:
         self.agent = GameAgent()
         self.reward_weights = {
             'self_hp_loss': -0.3,
-            'boss_hp_loss': 0.9,
+            'boss_hp_loss': 0.8,
             'self_death': -15,
             'self_posture_increase': -0.2,
-            'boss_posture_increase': 0.6,
+            'boss_posture_increase': 0.5,
             'defeat_bonus': 40,
             'survival_reward': 0.1,
-            'successful_defense': 0.8,
+            'successful_defense': 1.0,
         }
 
         self.reward_type_distribution = {
@@ -102,14 +102,12 @@ class GameController:
 
         logger.info("Boss HP <= 1, attempting to kill")
 
-        # 处理低血量 Boss 攻击逻辑
         reward = self.attack_in_low_health_phase(state_obj)
 
-        # 检查是否达到了停止游戏的条件
-        if self.missing_boss_hp_steps > 256:
-            reward += self.reward_weights.get('defeat_bonus', 40)  # 可根据需要调整
+        if self.missing_boss_hp_steps > 128:
+            reward += self.reward_weights.get('defeat_bonus', 40)
             self.defeated = 2
-            logger.info("Missing boss HP steps exceeded 256, stopping game.")
+            logger.info("Missing boss HP steps exceeded 128, stopping game.")
         else:
             self.defeated = 0
 
@@ -120,7 +118,6 @@ class GameController:
         reward = 0
         time_elapsed = time.time() - self.defeat_window_start if self.defeat_window_start else 0
 
-        # 增加 missing_boss_hp_steps，无论 Boss 是否为单命
         if state_obj.next_features['boss_hp'] <= 0:
             self.missing_boss_hp_steps += 1
         else:
@@ -128,13 +125,11 @@ class GameController:
 
         logger.debug(f"Missing Boss HP Steps: {self.missing_boss_hp_steps}")
 
-        # 检查是否超过 256 步
         if self.missing_boss_hp_steps > 256:
             logger.info("Boss HP has disappeared for over 256 steps, stopping game.")
             self.defeated = 2
             return reward
 
-        # 处理 Boss 血量恢复的情况
         if state_obj.current_features['boss_hp'] > 50:
             reward += self.reward_weights['defeat_bonus']
             self.current_reward_types['defeat_bonus'] += self.reward_weights['defeat_bonus']
@@ -279,7 +274,7 @@ class GameController:
                     self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,
                                                 self.defeated)
 
-                if self.env.target_step % 32 == 0:
+                if self.env.target_step % 64 == 0:
                     self.agent.train()
 
                 if self.defeated:

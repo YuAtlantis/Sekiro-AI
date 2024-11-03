@@ -9,9 +9,10 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 import numpy as np
 import torch.optim.lr_scheduler as lr_scheduler
+import torch.nn.functional as F
 
 # Experience replay buffer size
-REPLAY_SIZE = 1048576
+REPLAY_SIZE = 524288
 # Minibatch size
 SMALL_BATCH_SIZE = 64
 BIG_BATCH_SIZE = 128
@@ -20,10 +21,10 @@ BATCH_SIZE_DOOR = 1000
 # Hyperparameters for Dueling DQN
 GAMMA = 0.99
 INITIAL_EPSILON = 1.0
-FINAL_EPSILON = 0.01
+FINAL_EPSILON = 0
 EPSILON_DECAY = 50000
 LR = 0.001
-ALPHA = 0.5
+ALPHA = 0.7
 BETA_START = 0.4
 BETA_FRAMES = 100000
 
@@ -162,7 +163,7 @@ class PrioritizedReplayBuffer:
         return batch, idxs, is_weight
 
     def update(self, idxs, errors):
-        """批量更新多个优先级"""
+        """Batch update multiple priorities"""
         if not hasattr(idxs, '__iter__') or not hasattr(errors, '__iter__'):
             raise TypeError("idxs and errors must be iterable")
         if len(idxs) != len(errors):
@@ -189,9 +190,8 @@ class DQNAgent:
         self.target_net = DuelingDQN(input_channels, action_space).to(device)
         self.update_target_network()
         trainable_params = filter(lambda p: p.requires_grad, self.eval_net.parameters())
-        self.optimizer = optim.Adam(trainable_params, lr=LR, weight_decay=1e-5)
-
-        self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=15000, gamma=0.8)
+        self.optimizer = optim.AdamW(trainable_params, lr=LR, weight_decay=1e-5)
+        self.scheduler = lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=100000)
 
         self.epsilon = INITIAL_EPSILON
         self.beta = BETA_START
@@ -199,6 +199,9 @@ class DQNAgent:
         self.model_file = model_file
         self.writer = SummaryWriter(log_dir=f'./logs/run_{self.global_step}')
         self.scaler = GradScaler()
+
+        # Added: Initialize best reward
+        self.best_reward = -float('inf')  # Initialize to negative infinity to ensure the first reward is recorded as best
 
         # Load checkpoint or DQN
         self.load_checkpoint_or_model()
@@ -226,7 +229,8 @@ class DQNAgent:
                 self.train_step = checkpoint.get('train_step', 0)
                 self.epsilon = checkpoint.get('epsilon', INITIAL_EPSILON)
                 self.beta = checkpoint.get('beta', BETA_START)
-                print(f"Checkpoint loaded successfully. Global Step: {self.global_step}, Train Step: {self.train_step}")
+                self.best_reward = checkpoint.get('best_reward', -float('inf'))  # Restore best reward
+                print(f"Checkpoint loaded successfully. Global Step: {self.global_step}, Train Step: {self.train_step}, Best Reward: {self.best_reward}")
                 return  # Successfully loaded from checkpoint
 
         # If no checkpoints found, try to load from model_file
@@ -250,7 +254,8 @@ class DQNAgent:
                 self.beta = checkpoint.get('beta', BETA_START)
                 self.global_step = checkpoint.get('global_step', 0)
                 self.train_step = checkpoint.get('train_step', 0)
-                print(f"Model loaded successfully from {self.model_file}.")
+                self.best_reward = checkpoint.get('best_reward', -float('inf'))  # Restore best reward
+                print(f"Model loaded successfully from {self.model_file}. Best Reward: {self.best_reward}")
             except Exception as e:
                 print(f"Failed to load model from {self.model_file}: {e}")
                 print("Initializing networks randomly.")
@@ -272,6 +277,7 @@ class DQNAgent:
         self.beta = BETA_START
         self.global_step = 0
         self.train_step = 0
+        self.best_reward = -float('inf')  # Reset best reward
 
     @staticmethod
     def _init_weights(m):
@@ -329,7 +335,7 @@ class DQNAgent:
 
         self.writer.add_scalar('Gradient norm', total_norm, self.global_step)
 
-        # 记录当前学习率
+        # Log current learning rate
         current_lr = self.optimizer.param_groups[0]['lr']
         self.writer.add_scalar('Learning Rate', current_lr, self.global_step)
 
@@ -337,10 +343,10 @@ class DQNAgent:
         if len(self.replay_buffer) < batch_size:
             return
 
-        # 更新 Beta 值，用于优先经验回放
+        # Update Beta value for prioritized experience replay
         self.beta = min(1.0, self.beta + (1.0 - BETA_START) / BETA_FRAMES)
 
-        # 从回放缓冲区采样
+        # Sample from replay buffer
         samples, idxs, is_weights = self.replay_buffer.sample(batch_size, self.beta)
         batch = list(zip(*samples))
         state_batch = torch.stack(batch[0]).to(device, non_blocking=True)
@@ -351,48 +357,48 @@ class DQNAgent:
         is_weights = torch.tensor(is_weights, dtype=torch.float32, device=device)
 
         with autocast(device_type=device.type):
-            # 当前 Q 值
+            # Current Q values
             q_values = self.eval_net(state_batch).gather(1, action_batch).squeeze(1)
 
-            # 计算目标 Q 值
+            # Calculate target Q values
             with torch.no_grad():
-                # Double DQN: 动作选择由 eval_net 完成，Q 值由 target_net 计算
+                # Double DQN: Action selection by eval_net, Q values by target_net
                 next_actions = self.eval_net(next_state_batch).argmax(1, keepdim=True)
                 next_q_values = self.target_net(next_state_batch).gather(1, next_actions).squeeze(1)
                 target_q_values = reward_batch + (1 - done_batch) * GAMMA * next_q_values
 
-            # TD 误差
+            # TD errors
             td_errors = q_values - target_q_values
 
-            # 使用重要性采样权重计算损失
-            loss = (is_weights * td_errors.pow(2)).mean()
+            # Compute loss using importance sampling weights
+            loss = (is_weights * F.smooth_l1_loss(q_values, target_q_values, reduction='none')).mean()
 
-        # 反向传播和优化
+        # Backpropagation and optimization
         self.optimizer.zero_grad()
         self.scaler.scale(loss).backward()
-        # 梯度裁剪
+        # Gradient clipping
         self.scaler.unscale_(self.optimizer)
         total_norm = torch.nn.utils.clip_grad_norm_(self.eval_net.parameters(), max_norm=1)
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
-        # 更新学习率调度器
+        # Update learning rate scheduler
         self.scheduler.step()
 
-        # 计算总奖励
+        # Compute total reward
         reward_sum = torch.sum(reward_batch).item()
 
-        # 计算 Q 值的最大值、最小值和平均值
+        # Compute Q value statistics
         q_max = q_values.max().item()
         q_min = q_values.min().item()
         q_mean = q_values.mean().item()
 
-        # 计算 Target Q 值的最大值、最小值和平均值
+        # Compute target Q value statistics
         target_q_max = target_q_values.max().item()
         target_q_min = target_q_values.min().item()
         target_q_mean = target_q_values.mean().item()
 
-        # 日志记录
+        # Log metrics
         self.log_metrics(
             loss.item(),
             reward_sum,
@@ -405,20 +411,32 @@ class DQNAgent:
             total_norm
         )
 
-        # 计算并更新优先经验回放中的优先级
+        # Check and save best model
+        self.check_and_save_best_model(reward_sum)
+
+        # Calculate and update priorities in prioritized experience replay
         td_errors_cpu = td_errors.detach().cpu().numpy()
         abs_td_errors = np.abs(td_errors_cpu)
         self.replay_buffer.update(idxs, abs_td_errors)
 
-        # 增加训练步数
+        # Increment training steps
         self.train_step += 1
-        self.global_step += 1  # 增加 global_step
+        self.global_step += 1  # Increment global_step
 
-        # 定期更新目标网络
+        # Periodically update target network
         self.update_target_network()
 
-        # 定期保存模型检查点
+        # Periodically save model checkpoints
         self.save_checkpoint()
+
+    def check_and_save_best_model(self, reward_sum):
+        """
+        Check if the current reward exceeds the best reward, and if so, save the model as the best model.
+        """
+        if reward_sum > self.best_reward:
+            print(f"New best reward: {reward_sum} (previous best: {self.best_reward})")
+            self.best_reward = reward_sum
+            self.save_best_model()
 
     def save_checkpoint(self):
         checkpoint_path = os.path.join(self.model_folder, f"checkpoint_step_{self.global_step}.pth")
@@ -430,6 +448,7 @@ class DQNAgent:
             'scheduler_state_dict': self.scheduler.state_dict(),
             'epsilon': self.epsilon,
             'beta': self.beta,
+            'best_reward': self.best_reward,  # Save best reward
         }, checkpoint_path)
         print(f"Checkpoint saved at step {self.global_step} to {checkpoint_path}")
 
@@ -452,5 +471,23 @@ class DQNAgent:
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'epsilon': self.epsilon,
+            'best_reward': self.best_reward,  # Save best reward
         }, save_path)
         print(f"Model saved at episode {episode} to {save_path}")
+
+    def save_best_model(self):
+        """
+        Save the current best model. You can choose a dedicated filename, such as 'best_model.pth'.
+        """
+        best_model_path = os.path.join(self.model_folder, "best_model.pth")
+        torch.save({
+            'global_step': self.global_step,
+            'train_step': self.train_step,
+            'model_state_dict': self.eval_net.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
+            'epsilon': self.epsilon,
+            'beta': self.beta,
+            'best_reward': self.best_reward,
+        }, best_model_path)
+        print(f"Best model saved with reward {self.best_reward} at {best_model_path}")
