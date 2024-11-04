@@ -31,9 +31,7 @@ class GameEnvironment:
         self.tool_manager = None
         self.self_stop_mark = 0
         self.target_step = 0
-        self.heal_cooldown = 5
-        self.heal_count = 9999
-        self.action_space_size = 8
+        self.action_space_size = 7
         self.current_remaining_uses = 19
         self.screen_lock = threading.Lock()
         self.full_screen_img = None
@@ -99,20 +97,17 @@ class GameEnvironment:
         """Reset various counters and flags."""
         self.self_stop_mark = 0
         self.target_step = 0
-        self.heal_count = 9999
 
     def get_action_mask(self):
-        """Generate a mask for valid actions based on tool cooldowns and heal status."""
+        """Generate a mask for valid actions based on tool cooldowns."""
         action_mask = [1] * self.action_space_size
         if self.tool_manager.tools_exhausted:
-            action_mask[5] = action_mask[6] = action_mask[7] = 0
+            action_mask[4] = action_mask[5] = action_mask[6] = 0
         else:
             remaining_cooldowns = self.tool_manager.get_remaining_cooldown()
             for i in range(3):
                 if remaining_cooldowns[i] > 0:
-                    action_mask[5 + i] = 0
-        if self.heal_count == 0 or self.heal_cooldown > 0:
-            action_mask[4] = 0
+                    action_mask[4 + i] = 0
         return action_mask
 
     def set_tool_manager(self, tool_manager):

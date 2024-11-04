@@ -7,7 +7,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 class GameAgent:
-    def __init__(self, input_channels=3, action_space=8, model_file="./models",
+    def __init__(self, input_channels=3, action_space=7, model_file="./models",
                  model_folder="./models"):
         self.dqn_agent = DQNAgent(input_channels, action_space, model_file, model_folder)
         self.TRAIN_BATCH_SIZE = BIG_BATCH_SIZE

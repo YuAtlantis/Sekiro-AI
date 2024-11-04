@@ -27,21 +27,21 @@ class GameController:
         self.defeated = 0
         self.defeat_count = 0
         self.missing_boss_hp_steps = 0
+        self.boss_lives = 1
         self.defeat_window_start = None
-        self.phase_transition_detected = False
         self.env = GameEnvironment()
         self.tool_manager = ToolManager()
         self.env.set_tool_manager(self.tool_manager)
         self.agent = GameAgent()
         self.reward_weights = {
             'self_hp_loss': -0.3,
-            'boss_hp_loss': 0.8,
-            'self_death': -15,
-            'self_posture_increase': -0.2,
-            'boss_posture_increase': 0.5,
-            'defeat_bonus': 40,
-            'survival_reward': 0.1,
-            'successful_defense': 1.0,
+            'boss_hp_loss': 1.0,
+            'self_death': -20,
+            'self_posture_increase': -0.15,
+            'boss_posture_increase': 0.3,
+            'defeat_bonus': 50,
+            'time_penalty': -0.06,
+            'successful_defense': 1.5,
         }
 
         self.reward_type_distribution = {
@@ -58,12 +58,10 @@ class GameController:
         """Judge the action and calculate the reward."""
         reward, defeated = 0, 0
         self.defeat_window_start = None
-        self.phase_transition_detected = False
 
-        # Survival reward
-        survival_reward = self.reward_weights['survival_reward']
-        reward += survival_reward
-        self.current_reward_types['survival_reward'] += survival_reward
+        time_penalty = self.reward_weights['time_penalty']
+        reward += time_penalty
+        self.current_reward_types['time_penalty'] += time_penalty
 
         # Successful defense
         if self.check_successful_defense(state_obj):
@@ -97,21 +95,39 @@ class GameController:
 
     def handle_boss_low_health(self, state_obj):
         """Handle the scenario when the boss's health is low."""
-        if not self.defeat_window_start:
-            self.defeat_window_start = time.time()
 
-        logger.info("Boss HP <= 1, attempting to kill")
-
-        reward = self.attack_in_low_health_phase(state_obj)
-
-        if self.missing_boss_hp_steps > 128:
-            reward += self.reward_weights.get('defeat_bonus', 40)
-            self.defeated = 2
-            logger.info("Missing boss HP steps exceeded 128, stopping game.")
+        if self.boss_lives == 1:
+            # Boss has only one life; attempt to defeat immediately
+            logger.info("Boss has a single life. Attempting to defeat immediately.")
+            reward = self.attack_directly()
+            self.defeated = 2  # Indicate boss defeated
+            return reward, self.defeated
         else:
-            self.defeated = 0
+            # Boss has multiple lives; proceed with existing defeat window logic
+            if not self.defeat_window_start:
+                self.defeat_window_start = time.time()
 
-        return reward, self.defeated
+            logger.info("Boss HP <= 1, attempting to kill")
+
+            reward = self.attack_in_low_health_phase(state_obj)
+
+            if self.missing_boss_hp_steps > 40:
+                defeat_bonus = self.reward_weights.get('defeat_bonus', 40)
+                reward += defeat_bonus
+                self.defeated = 2
+                logger.info("Missing boss HP steps exceeded 40, stopping game.")
+            else:
+                self.defeated = 0
+
+            return reward, self.defeated
+
+    def attack_directly(self):
+        """Attack the boss directly to defeat it."""
+        attack()  # Perform the attack using the imported function
+        defeat_bonus = self.reward_weights.get('defeat_bonus', 40)
+        self.current_reward_types['defeat_bonus'] += defeat_bonus
+        logger.info("Boss defeated directly, awarded defeat bonus.")
+        return defeat_bonus
 
     def attack_in_low_health_phase(self, state_obj):
         """Attack during the boss's low health phase."""
@@ -123,27 +139,20 @@ class GameController:
         else:
             self.missing_boss_hp_steps = 0
 
-        logger.debug(f"Missing Boss HP Steps: {self.missing_boss_hp_steps}")
-
-        if self.missing_boss_hp_steps > 256:
-            logger.info("Boss HP has disappeared for over 256 steps, stopping game.")
-            self.defeated = 2
-            return reward
+        logger.info(f"Missing Boss HP Steps: {self.missing_boss_hp_steps}")
 
         if state_obj.current_features['boss_hp'] > 50:
             reward += self.reward_weights['defeat_bonus']
             self.current_reward_types['defeat_bonus'] += self.reward_weights['defeat_bonus']
             self.defeat_count += 1
-            self.phase_transition_detected = True
-            logger.info(f"Boss HP restored above 50%, entering next phase: {self.defeat_count}")
             self.defeat_window_start = None
+            logger.info(f"Boss HP restored above 50%, entering next phase: {self.defeat_count}")
         else:
             if time_elapsed < 8:
                 attack()
                 logger.info("Continuing to attack Boss, ensuring defeat...")
             else:
                 self.defeat_window_start = None
-                self.phase_transition_detected = False
 
         return reward
 
@@ -234,9 +243,6 @@ class GameController:
                 self.env.target_step += 1
                 self.env.paused = pause_game(self.env.paused)
 
-                if self.env.heal_cooldown > 0:
-                    self.env.heal_cooldown -= 1
-
                 action_mask = self.env.get_action_mask()
 
                 if self.env.manual:
@@ -261,14 +267,6 @@ class GameController:
                 state_obj.update(features, next_state)
 
                 reward, self.defeated = self.action_judge(state_obj)
-
-                if action == 4:
-                    self.env.heal_count -= 1
-                    self.env.heal_cooldown = 8
-                    if state_obj.current_features['self_hp'] < 50:
-                        reward += 2
-                    else:
-                        reward -= 4
 
                 if action is not None:
                     self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,

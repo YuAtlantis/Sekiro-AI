@@ -14,10 +14,8 @@ def take_action(action_index, debugged, tool_manager):
             input_keys.tiptoe()
         elif action_index == 3:
             input_keys.jump()
-        elif action_index == 4:
-            input_keys.heal()
-        elif action_index in [5, 6, 7]:
-            tool_manager.use_specific_tool(action_index - 5)
+        elif action_index in [4, 5, 6]:
+            tool_manager.use_specific_tool(action_index - 4)
 
 
 def wait_before_start(seconds, paused):
@@ -41,11 +39,11 @@ def restart(env, defeated, defeat_count):
         pause_game(True)
 
     def restart_sequence():
-        print("-------------------------Waiting for 9 seconds to restart the game-------------------------")
-        time.sleep(8)
+        print("-------------------------Waiting for 7 seconds to restart the game-------------------------")
+        time.sleep(6)
         focus_game_window()
         input_keys.lock_vision()
-        time.sleep(2)
+        time.sleep(0.5)
         input_keys.attack()
         time.sleep(1)
 

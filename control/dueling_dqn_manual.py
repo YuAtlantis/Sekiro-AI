@@ -52,7 +52,7 @@ def on_release(key):
 
 # Tool management and action handling
 tool_index = 1
-tool_result = 4
+tool_result = 3
 
 
 def handle_key_action(key_char):
@@ -62,18 +62,17 @@ def handle_key_action(key_char):
     action_mapping = {
         'e': (2, "tiptoe"),
         'a': (3, "left"),
-        '1': (4, "heal"),
     }
 
     if key_char == 'z':  # Tool switch
         tool_index += 1
         if tool_index > 3:
             tool_index = 1
-        tool_result = 4 + tool_index
+        tool_result = 3 + tool_index
         print(f"Change to the game tool {tool_index}")
 
     elif key_char == '3':  # Use the tool
-        tool_result = 4 + tool_index
+        tool_result = 3 + tool_index
         print(f"Use the game tool {tool_index}, return {tool_result}")
         return tool_result
 

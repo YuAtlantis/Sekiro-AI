@@ -74,7 +74,7 @@ def calculate_health_percentage(health_bar_image):
     # Define red color range in HSV
     lower_red1 = np.array([0, 100, 100])
     upper_red1 = np.array([10, 255, 255])
-    lower_red2 = np.array([170, 100, 100])
+    lower_red2 = np.array([170, 150, 100])
     upper_red2 = np.array([180, 255, 255])
 
     # Create masks for red color
@@ -174,6 +174,8 @@ def extract_posture(player_posture_img, boss_posture_img):
     """
     player_posture = calculate_posture_percentage(player_posture_img)
     boss_posture = calculate_posture_percentage(boss_posture_img)
+
+    logging.info(f'Player Posture : {player_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
 
     if DEBUG_MODE:
         cv2.imshow('Player Posture Bar', player_posture_img)
