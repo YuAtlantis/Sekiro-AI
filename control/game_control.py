@@ -14,8 +14,8 @@ def take_action(action_index, debugged, tool_manager):
             input_keys.tiptoe()
         elif action_index == 3:
             input_keys.jump()
-        elif action_index in [4, 5, 6]:
-            tool_manager.use_specific_tool(action_index - 4)
+        # elif action_index in [4, 5, 6]:
+        #     tool_manager.use_specific_tool(action_index - 4)
 
 
 def wait_before_start(seconds, paused):

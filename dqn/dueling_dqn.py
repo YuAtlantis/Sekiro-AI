@@ -21,12 +21,12 @@ BATCH_SIZE_DOOR = 1000
 # Hyperparameters for Dueling DQN
 GAMMA = 0.99
 INITIAL_EPSILON = 1.0
-FINAL_EPSILON = 0
-EPSILON_DECAY = 25000
-LR = 0.001
-ALPHA = 0.7
+FINAL_EPSILON = 0.01
+EPSILON_DECAY = 30000
+LR = 0.0001
+ALPHA = 0.5
 BETA_START = 0.4
-BETA_FRAMES = 100000
+BETA_FRAMES = 200000
 
 # Check if GPU is available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -182,7 +182,6 @@ class PrioritizedReplayBuffer:
 class DQNAgent:
     def __init__(self, input_channels, action_space, model_file, model_folder):
         self.global_step = 0
-        self.train_step = 0
         self.state_dim = input_channels
         self.action_space = action_space
         self.replay_buffer = PrioritizedReplayBuffer(REPLAY_SIZE)
@@ -226,11 +225,10 @@ class DQNAgent:
                 if 'scheduler_state_dict' in checkpoint:
                     self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
                 self.global_step = checkpoint.get('global_step', 0)
-                self.train_step = checkpoint.get('train_step', 0)
                 self.epsilon = checkpoint.get('epsilon', INITIAL_EPSILON)
                 self.beta = checkpoint.get('beta', BETA_START)
                 self.best_reward = checkpoint.get('best_reward', -float('inf'))  # Restore best reward
-                print(f"Checkpoint loaded successfully. Global Step: {self.global_step}, Train Step: {self.train_step}, Best Reward: {self.best_reward}")
+                print(f"Checkpoint loaded successfully. Global Step: {self.global_step}, Best Reward: {self.best_reward}")
                 return  # Successfully loaded from checkpoint
 
         # If no checkpoints found, try to load from model_file
@@ -241,9 +239,6 @@ class DQNAgent:
         """Load the model and optimizer state from a file."""
         if os.path.exists(self.model_file):
             try:
-                # Handle the FutureWarning by setting weights_only=True if appropriate
-                # However, since you're loading a full checkpoint (including optimizer and scheduler),
-                # you need weights_only=False. Be aware of the warning for future updates.
                 checkpoint = torch.load(self.model_file, map_location=device)
                 self.eval_net.load_state_dict(checkpoint['model_state_dict'])
                 self.target_net.load_state_dict(checkpoint['model_state_dict'])  # Ensure target_net is synced
@@ -253,7 +248,6 @@ class DQNAgent:
                 self.epsilon = checkpoint.get('epsilon', INITIAL_EPSILON)
                 self.beta = checkpoint.get('beta', BETA_START)
                 self.global_step = checkpoint.get('global_step', 0)
-                self.train_step = checkpoint.get('train_step', 0)
                 self.best_reward = checkpoint.get('best_reward', -float('inf'))  # Restore best reward
                 print(f"Model loaded successfully from {self.model_file}. Best Reward: {self.best_reward}")
             except Exception as e:
@@ -276,7 +270,6 @@ class DQNAgent:
         self.epsilon = INITIAL_EPSILON
         self.beta = BETA_START
         self.global_step = 0
-        self.train_step = 0
         self.best_reward = -float('inf')  # Reset best reward
 
     @staticmethod
@@ -288,9 +281,9 @@ class DQNAgent:
                 nn.init.constant_(m.bias, 0)
 
     def update_target_network(self, train_step_interval=5000):
-        if self.train_step % train_step_interval == 0:
+        if self.global_step % train_step_interval == 0:
             self.target_net.load_state_dict(self.eval_net.state_dict())
-            print(f"Target network updated at train step {self.train_step}")
+            print(f"Target network updated at global step {self.global_step}")
 
     def choose_action(self, state, action_mask):
         if random.random() <= self.epsilon:
@@ -316,7 +309,6 @@ class DQNAgent:
         next_state = next_state.to(device)
         max_priority = self.replay_buffer.max_priority
         self.replay_buffer.add(max_priority, (state, action, reward, next_state, done))
-        self.global_step += 1
 
     def log_metrics(self, loss, reward_sum, q_max, q_min, q_mean, target_q_max, target_q_min, target_q_mean,
                     total_norm):
@@ -419,9 +411,8 @@ class DQNAgent:
         abs_td_errors = np.abs(td_errors_cpu)
         self.replay_buffer.update(idxs, abs_td_errors)
 
-        # Increment training steps
-        self.train_step += 1
-        self.global_step += 1  # Increment global_step
+        # Increment global steps
+        self.global_step += 1
 
         # Periodically update target network
         self.update_target_network()
@@ -442,7 +433,6 @@ class DQNAgent:
         checkpoint_path = os.path.join(self.model_folder, f"checkpoint_step_{self.global_step}.pth")
         torch.save({
             'global_step': self.global_step,
-            'train_step': self.train_step,
             'model_state_dict': self.eval_net.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
@@ -482,7 +472,6 @@ class DQNAgent:
         best_model_path = os.path.join(self.model_folder, "best_model.pth")
         torch.save({
             'global_step': self.global_step,
-            'train_step': self.train_step,
             'model_state_dict': self.eval_net.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),

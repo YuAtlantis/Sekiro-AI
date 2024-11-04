@@ -1,6 +1,7 @@
 # health_posture.py
 
 import cv2
+import time
 import numpy as np
 import logging
 from numba import njit
@@ -11,6 +12,9 @@ DEBUG_MODE = False  # Set to True to enable debugging visuals
 
 HEALTH_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 POSTURE_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+
+LOG_INTERVAL = 2
+last_log_time = 0
 
 
 @njit
@@ -57,6 +61,20 @@ def compute_posture_percentage(indices, max_profile, total_width):
     else:
         posture_percentage = 0.0
     return posture_percentage
+
+
+def log_with_interval(message):
+    """
+    Controls the frequency of log printing, printing logs only if more than LOG_INTERVAL seconds have passed.
+
+    Args:
+        message (str): The log message to be printed.
+    """
+    global last_log_time
+    current_time = time.time()
+    if current_time - last_log_time >= LOG_INTERVAL:
+        logging.info(message)
+        last_log_time = current_time
 
 
 def calculate_health_percentage(health_bar_image):
@@ -152,7 +170,7 @@ def extract_health(player_health_img, boss_health_img):
     player_health = calculate_health_percentage(player_health_img)
     boss_health = calculate_health_percentage(boss_health_img)
 
-    logging.info(f'Player Health: {player_health:.2f}%, Boss Health: {boss_health:.2f}%')
+    log_with_interval(f'Player Health: {player_health:.2f}%, Boss Health: {boss_health:.2f}%')
 
     if DEBUG_MODE:
         cv2.imshow('Player Health Bar', player_health_img)
@@ -175,7 +193,7 @@ def extract_posture(player_posture_img, boss_posture_img):
     player_posture = calculate_posture_percentage(player_posture_img)
     boss_posture = calculate_posture_percentage(boss_posture_img)
 
-    logging.info(f'Player Posture : {player_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
+    log_with_interval(f'Player Posture : {player_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
 
     if DEBUG_MODE:
         cv2.imshow('Player Posture Bar', player_posture_img)
