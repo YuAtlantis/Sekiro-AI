@@ -1,10 +1,10 @@
 import os
 import random
 import torch
+import math
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.init as init
-from torchvision.models import resnet101, ResNet101_Weights
 from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 import numpy as np
@@ -22,7 +22,7 @@ BATCH_SIZE_DOOR = 1000
 GAMMA = 0.99
 INITIAL_EPSILON = 1.0
 FINAL_EPSILON = 0.01
-EPSILON_DECAY = 30000
+EPSILON_DECAY = 50000
 LR = 0.0001
 ALPHA = 0.5
 BETA_START = 0.4
@@ -37,40 +37,77 @@ class DuelingDQN(nn.Module):
         super(DuelingDQN, self).__init__()
         self.action_space = action_space
 
-        # Using ResNet101 for feature extraction
-        self.feature_extractor = resnet101(weights=ResNet101_Weights.DEFAULT)
-        self.feature_extractor.conv1 = nn.Conv2d(input_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        init.kaiming_normal_(self.feature_extractor.conv1.weight, mode='fan_out', nonlinearity='relu')
-        self.feature_extractor.fc = nn.Identity()
+        # Define the Convolutional Neural Network (CNN)
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(input_channels, 32, kernel_size=8, stride=4),  # Output size: (W - 8)/4 + 1
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),  # Output size: (W - 4)/2 + 1
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),  # Output size: (W - 3)/1 + 1
+            nn.ReLU()
+        )
 
+        # Compute the flattened size of the output from convolutional layers
+        def compute_flattened_size():
+            with torch.no_grad():
+                dummy_input = torch.zeros(1, input_channels, 84, 84)  # Assuming input size is 84x84
+                output = self.conv_layers(dummy_input)
+                return output.view(1, -1).size(1)
+
+        flattened_size = compute_flattened_size()
+
+        # Set parameters for the self-attention layer
+        self.embed_dim = 64  # Embedding dimension for the attention layer
+        self.seq_length = flattened_size // self.embed_dim  # Sequence length
+
+        # Adjust flattened size if it is not divisible
+        adjusted_flattened_size = self.seq_length * self.embed_dim
+
+        # Linear layer to adjust flattened features to fit the attention layer's required size
+        self.fc = nn.Linear(flattened_size, adjusted_flattened_size)
+
+        # Multi-head self-attention layer
+        self.attention_layer = nn.MultiheadAttention(embed_dim=self.embed_dim, num_heads=8, batch_first=True)
+
+        # Value stream and advantage stream
         self.value_stream = nn.Sequential(
-            nn.Linear(2048, 256),
+            nn.Linear(self.seq_length * self.embed_dim, 256),
             nn.ReLU(),
             nn.Linear(256, 1)
         )
 
         self.advantage_stream = nn.Sequential(
-            nn.Linear(2048, 256),
+            nn.Linear(self.seq_length * self.embed_dim, 256),
             nn.ReLU(),
             nn.Linear(256, action_space)
         )
 
-        # Apply Xavier initialization to the value and advantage streams
-        self.value_stream.apply(self._init_weights)
-        self.advantage_stream.apply(self._init_weights)
+        # Initialize weights
+        self.apply(self._init_weights)
 
     @staticmethod
     def _init_weights(m):
-        """Custom weight initialization using Xavier for linear layers."""
-        if isinstance(m, nn.Linear):
+        """Custom weight initialization using Xavier initialization method."""
+        if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
             nn.init.xavier_uniform_(m.weight)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        x = self.feature_extractor(x)
+        x = self.conv_layers(x)  # Output shape: [batch_size, channels, H, W]
+        x = x.view(x.size(0), -1)  # Flatten, shape: [batch_size, flattened_size]
+        x = self.fc(x)  # Adjust features, shape: [batch_size, seq_length * embed_dim]
+        x = x.view(x.size(0), self.seq_length, self.embed_dim)  # Reshape to [batch_size, seq_length, embed_dim]
+
+        # Apply self-attention mechanism
+        x, _ = self.attention_layer(x, x, x)  # Output shape: [batch_size, seq_length, embed_dim]
+
+        x = x.contiguous().view(x.size(0), -1)  # Flatten again to [batch_size, seq_length * embed_dim]
+
+        # Calculate value and advantage
         v = self.value_stream(x)
         a = self.advantage_stream(x)
+
         q = v + (a - a.mean(dim=1, keepdim=True))
         return q
 
@@ -200,7 +237,8 @@ class DQNAgent:
         self.scaler = GradScaler()
 
         # Added: Initialize best reward
-        self.best_reward = -float('inf')  # Initialize to negative infinity to ensure the first reward is recorded as best
+        self.best_reward = -float(
+            'inf')  # Initialize to negative infinity to ensure the first reward is recorded as best
 
         # Load checkpoint or DQN
         self.load_checkpoint_or_model()
@@ -228,7 +266,8 @@ class DQNAgent:
                 self.epsilon = checkpoint.get('epsilon', INITIAL_EPSILON)
                 self.beta = checkpoint.get('beta', BETA_START)
                 self.best_reward = checkpoint.get('best_reward', -float('inf'))  # Restore best reward
-                print(f"Checkpoint loaded successfully. Global Step: {self.global_step}, Best Reward: {self.best_reward}")
+                print(
+                    f"Checkpoint loaded successfully. Global Step: {self.global_step}, Best Reward: {self.best_reward}")
                 return  # Successfully loaded from checkpoint
 
         # If no checkpoints found, try to load from model_file

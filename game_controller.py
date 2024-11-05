@@ -32,12 +32,12 @@ class GameController:
         self.boss_lives = 1
 
         self.successful_defense_count = 0
-        self.max_defense_rewards = 5
+        self.max_defense_rewards = 10
 
         self.steps_since_last_attack = 0
-        self.idle_threshold = 25
+        self.idle_threshold = 10
 
-        self.time_penalty_increment = -0.001
+        self.time_penalty_increment = 0.002
 
         self.defeat_window_start = None
         self.env = GameEnvironment()
@@ -50,11 +50,11 @@ class GameController:
             '25%': False
         }
         self.reward_weights = {
-            'self_hp_loss': -0.4,
-            'boss_hp_loss': 1.0,
+            'self_hp_loss': -0.3,
+            'boss_hp_loss': 1.2,
             'self_death': -20,
-            'self_posture_increase': -0.15,
-            'boss_posture_increase': 0.3,
+            'self_posture_increase': -0.1,
+            'boss_posture_increase': 0.4,
             'defeat_bonus': 30,
             'time_penalty': -0.1,
             'successful_defense': 1.0,
@@ -94,7 +94,7 @@ class GameController:
 
         # 3. Apply Idle Penalty
         if self.steps_since_last_attack >= self.idle_threshold:
-            idle_penalty = -2
+            idle_penalty = -5
             reward += idle_penalty
             self.current_reward_types['idle_penalty'] += idle_penalty
             logger.info("Idle penalty applied due to prolonged inactivity.")
@@ -147,7 +147,7 @@ class GameController:
             reward = self.attack_in_low_health_phase(state_obj)
 
             if self.missing_boss_hp_steps > 40:
-                defeat_bonus = self.reward_weights.get('defeat_bonus', 40)
+                defeat_bonus = self.reward_weights.get('defeat_bonus')
                 reward += defeat_bonus
                 self.defeated = 2
                 logger.info("Boss HP missing steps exceeded threshold; game will stop.")
@@ -159,7 +159,7 @@ class GameController:
     def attack_directly(self):
         """Attack the boss directly to defeat it."""
         attack()  # Perform the attack using the imported function
-        defeat_bonus = self.reward_weights.get('defeat_bonus', 40)
+        defeat_bonus = self.reward_weights.get('defeat_bonus')
         reward = defeat_bonus
         self.current_reward_types['defeat_bonus'] += defeat_bonus
         logger.info("Boss defeated directly; defeat bonus awarded.")
@@ -218,23 +218,23 @@ class GameController:
         # 3. Intermediate rewards based on boss HP thresholds
         boss_hp_percentage = state_obj.next_features['boss_hp']
         if 0.75 > boss_hp_percentage >= 0.5 and not self.intermediate_rewards_given['75%']:
-            reward += 3
-            self.current_reward_types['intermediate_defeat'] += 3
+            reward += 5
+            self.current_reward_types['intermediate_defeat'] += 5
             self.intermediate_rewards_given['75%'] = True
             logger.info("Intermediate reward granted for boss HP between 50% and 75%.")
         elif 0.5 > boss_hp_percentage >= 0.25 and not self.intermediate_rewards_given['50%']:
-            reward += 7
-            self.current_reward_types['intermediate_defeat'] += 7
+            reward += 10
+            self.current_reward_types['intermediate_defeat'] += 10
             self.intermediate_rewards_given['50%'] = True
             logger.info("Intermediate reward granted for boss HP between 25% and 50%.")
         elif boss_hp_percentage < 0.25 and not self.intermediate_rewards_given['25%']:
-            reward += 12
-            self.current_reward_types['intermediate_defeat'] += 12
+            reward += 20
+            self.current_reward_types['intermediate_defeat'] += 20
             self.intermediate_rewards_given['25%'] = True
             logger.info("Intermediate reward granted for boss HP below 25%.")
 
         # 4. Self posture increase penalty
-        if deltas['self_posture'] > 0 and state_obj.current_features['self_posture'] > 80:
+        if deltas['self_posture'] > 0 and state_obj.current_features['self_posture'] > 100:
             self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
             reward += self_posture_penalty
             self.current_reward_types['self_posture_increase'] += self_posture_penalty

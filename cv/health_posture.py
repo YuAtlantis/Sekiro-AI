@@ -117,9 +117,6 @@ def calculate_health_percentage(health_bar_image):
     else:
         health_percentage = 0.0
 
-    if DEBUG_MODE:
-        cv2.imshow('Health Mask', mask)
-
     return health_percentage
 
 
@@ -150,9 +147,6 @@ def calculate_posture_percentage(posture_bar_image):
     indices = np.where(profile > (np.max(profile) * 0.3))[0]
     posture_percentage = compute_posture_percentage(indices, np.max(profile), mask.shape[1])
 
-    if DEBUG_MODE:
-        cv2.imshow('Posture Mask', mask)
-
     return posture_percentage
 
 
@@ -175,6 +169,7 @@ def extract_health(player_health_img, boss_health_img):
     if DEBUG_MODE:
         cv2.imshow('Player Health Bar', player_health_img)
         cv2.imshow('Boss Health Bar', boss_health_img)
+        cv2.waitKey(1)
 
     return player_health, boss_health
 
@@ -198,5 +193,6 @@ def extract_posture(player_posture_img, boss_posture_img):
     if DEBUG_MODE:
         cv2.imshow('Player Posture Bar', player_posture_img)
         cv2.imshow('Boss Posture Bar', boss_posture_img)
+        cv2.waitKey(1)
 
     return player_posture, boss_posture

@@ -10,6 +10,7 @@ logging.basicConfig(level=logging.INFO)
 
 def main():
     regions = {
+        'game_window': (220, 145, 800, 530),
         'self_blood': (54, 562, 400, 576),
         'boss_blood': (57, 93, 288, 105),
         'self_posture': (395, 535, 635, 552),

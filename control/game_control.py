@@ -5,7 +5,6 @@ from keys import input_keys
 
 def take_action(action_index, debugged, tool_manager):
     if not debugged:
-        print(f"------action index:{action_index}")
         if action_index == 0:
             input_keys.defense()
         elif action_index == 1:
