@@ -16,7 +16,7 @@ from collections import deque
 # Configure logging with rotating file handler
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-handler = RotatingFileHandler('./logs/game_controller.log', maxBytes=10*1024*1024, backupCount=5)
+handler = RotatingFileHandler('./logs/game_controller.log', maxBytes=10 * 1024 * 1024, backupCount=5)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
@@ -24,8 +24,10 @@ logger.addHandler(handler)
 
 class GameController:
     def __init__(self):
-        self.total_reward = 0
+        self.last_feature_log_time = 0
+
         self.frame_count = 0
+        self.last_actions = deque(maxlen=12)
 
         self.defeated = 0
         self.defeat_count = 0
@@ -40,7 +42,7 @@ class GameController:
         self.steps_since_last_attack = 0
         self.idle_threshold = 10
 
-        self.time_penalty_increment = -0.001
+        self.time_penalty_increment = -0.002
 
         self.past_states = deque(maxlen=5)
 
@@ -64,6 +66,7 @@ class GameController:
             'time_penalty': -0.1,
             'successful_defense': 0.8,
             "intermediate_defeat": 0,
+            'idle_penalty': -5
         }
 
         self.reward_type_distribution = {
@@ -73,6 +76,9 @@ class GameController:
             'boss_posture_increase': [],
             'defeat_bonus': [],
             'self_death': [],
+            'idle_penalty': [],
+            'time_penalty': [],
+            'successful_defense': []
         }
         self.current_reward_types = {key: 0 for key in self.reward_weights}
 
@@ -99,7 +105,7 @@ class GameController:
 
         # 3. Apply Idle Penalty
         if self.steps_since_last_attack >= self.idle_threshold:
-            idle_penalty = -5
+            idle_penalty = self.reward_weights['idle_penalty']
             reward += idle_penalty
             self.current_reward_types['idle_penalty'] += idle_penalty
             logger.info("Idle penalty applied due to prolonged inactivity.")
@@ -112,7 +118,6 @@ class GameController:
             self.current_reward_types['self_death'] += death_penalty
             defeated = 1
             logger.info("Agent has died. Death penalty applied.")
-            self.total_reward += reward
             return reward, defeated
 
         # 5. Check for Boss Defeat
@@ -124,7 +129,6 @@ class GameController:
             delta_reward = self.calculate_deltas(state_obj)
             reward += delta_reward
 
-        self.total_reward += reward
         return reward, defeated
 
     def check_successful_defense(self, state_obj, defense_window=5):
@@ -213,17 +217,13 @@ class GameController:
             self_hp_loss = self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
             reward += self_hp_loss
             self.current_reward_types['self_hp_loss'] += self_hp_loss
-        else:
-            self_hp_loss = 0
 
         # 2. Boss HP loss reward
-        if deltas['boss_hp'] < -2:
+        if -6 < deltas['boss_hp'] < -2:
             boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
             reward += boss_hp_reward
             self.current_reward_types['boss_hp_loss'] += boss_hp_reward
             self.steps_since_last_attack = 0  # Reset idle counter on successful attack
-        else:
-            boss_hp_reward = 0
 
         # 3. Intermediate rewards based on boss HP thresholds
         boss_hp_percentage = state_obj.next_features['boss_hp']
@@ -244,33 +244,18 @@ class GameController:
             logger.info("Intermediate reward granted for boss HP below 25%.")
 
         # 4. Self posture increase penalty
-        if deltas['self_posture'] > 5 and state_obj.current_features['self_posture'] > 100:
+        if 4 < deltas['self_posture'] < 16 and state_obj.current_features['self_posture'] > 100:
             self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
             reward += self_posture_penalty
             self.current_reward_types['self_posture_increase'] += self_posture_penalty
             logger.info(f"Self posture increased by {deltas['self_posture']:.2f}; penalty applied.")
-        else:
-            self_posture_penalty = 0
 
         # 5. Boss posture increase reward
-        if deltas['boss_posture'] > 5:
+        if 4 < deltas['boss_posture'] < 16:
             boss_posture_reward = self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
             reward += boss_posture_reward
             self.current_reward_types['boss_posture_increase'] += boss_posture_reward
             logger.info(f"Boss posture increased by {deltas['boss_posture']:.2f}; reward applied.")
-        else:
-            boss_posture_reward = 0
-
-        # Log reward details
-        if self.env.target_step % 20 == 0:
-            logger.info(
-                f"Step {self.env.target_step}: Reward Details - "
-                f"Self HP Loss Penalty: {self_hp_loss:.2f}, "
-                f"Boss HP Loss Reward: {boss_hp_reward:.2f}, "
-                f"Intermediate Defeat Reward: {reward - self_hp_loss - boss_hp_reward - self_posture_penalty - boss_posture_reward:.2f}, "
-                f"Self Posture Increase Penalty: {self_posture_penalty:.2f}, "
-                f"Boss Posture Increase Reward: {boss_posture_reward:.2f}"
-            )
 
         return reward
 
@@ -280,12 +265,11 @@ class GameController:
             self.reward_type_distribution[key].append(self.current_reward_types.get(key, 0))
 
         reward_details = " | ".join([f"{key}: {value:.2f}" for key, value in self.current_reward_types.items()])
-        reward_summary = f"Episode {episode + 1} Summary: Total Reward: {self.total_reward:.2f} | {reward_details}"
+        reward_summary = f"Episode {episode + 1} Summary: Total Reward: {sum(self.current_reward_types.values()):.2f} | {reward_details}"
 
         logger.info(reward_summary)
 
         # Reset total reward and current reward types
-        self.total_reward = 0
         self.current_reward_types = {key: 0 for key in self.reward_weights}
 
         # Reset defense count and intermediate rewards
@@ -345,6 +329,8 @@ class GameController:
                 if not self.env.manual and action is not None:
                     take_action(action, self.env.debugged, self.tool_manager)
 
+                self.last_actions.append(action)
+
                 game_window_img, screens = self.env.grab_screens()
                 if game_window_img is None:
                     logger.warning("Failed to capture screen, skipping action.")
@@ -355,11 +341,27 @@ class GameController:
                 next_state = self.env.prepare_state(resized_img)
                 state_obj.update(features, next_state)
 
+                current_time = time.time()
+                if current_time - self.last_feature_log_time >= 1:
+                    self_hp = features['self_hp']
+                    boss_hp = features['boss_hp']
+                    self_posture = features['self_posture']
+                    boss_posture = features['boss_posture']
+                    logging.info(f'Player Health: {self_hp:.2f}%, Boss Health: {boss_hp:.2f}%, '
+                                 f'Player Posture: {self_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
+                    self.last_feature_log_time = current_time
+
                 self.frame_count += 1
 
                 self.past_states.append(state_obj)
 
                 reward, self.defeated = self.action_judge(state_obj)
+
+                if not self.env.manual:
+                    if all(a == action for a in self.last_actions) and len(self.last_actions) == 12:
+                        reward += self.reward_weights['idle_penalty']
+                        self.current_reward_types['idle_penalty'] += self.reward_weights['idle_penalty']
+                        logger.info("Idle penalty applied due to prolonged same activity.")
 
                 if action is not None:
                     self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,

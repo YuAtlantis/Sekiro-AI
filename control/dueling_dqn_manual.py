@@ -61,7 +61,6 @@ def handle_key_action(key_char):
 
     action_mapping = {
         'e': (2, "tiptoe"),
-        'a': (3, "left"),
     }
 
     if key_char == 'z':  # Tool switch
