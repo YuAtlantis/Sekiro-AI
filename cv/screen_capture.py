@@ -36,7 +36,7 @@ def grab_full_screen(region=(0, 0, 1024, 620)):
         frame_count += 1
 
         # Calculate and log frame rate every 50 frames
-        if frame_count % 50 == 0:
+        if frame_count % 500 == 0:
             elapsed_time = time.time() - start_time
             frame_rate = frame_count / elapsed_time
             logging.info(f"Current frame rate: {frame_rate:.2f} FPS")
