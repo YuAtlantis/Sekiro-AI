@@ -11,6 +11,7 @@ from keys.input_keys import attack
 from control.dueling_dqn_manual import keyboard_result, mouse_result, start_listeners
 from control.game_control import take_action, pause_game, restart
 from logging.handlers import RotatingFileHandler
+from collections import deque
 
 # Configure logging with rotating file handler
 logger = logging.getLogger()
@@ -24,6 +25,7 @@ logger.addHandler(handler)
 class GameController:
     def __init__(self):
         self.total_reward = 0
+        self.frame_count = 0
 
         self.defeated = 0
         self.defeat_count = 0
@@ -32,12 +34,15 @@ class GameController:
         self.boss_lives = 1
 
         self.successful_defense_count = 0
-        self.max_defense_rewards = 10
+        self.max_defense_rewards = 8
+        self.last_defense_reset_time = time.time()
 
         self.steps_since_last_attack = 0
         self.idle_threshold = 10
 
-        self.time_penalty_increment = 0.002
+        self.time_penalty_increment = -0.001
+
+        self.past_states = deque(maxlen=5)
 
         self.defeat_window_start = None
         self.env = GameEnvironment()
@@ -51,13 +56,13 @@ class GameController:
         }
         self.reward_weights = {
             'self_hp_loss': -0.3,
-            'boss_hp_loss': 1.2,
+            'boss_hp_loss': 1.3,
             'self_death': -20,
             'self_posture_increase': -0.1,
             'boss_posture_increase': 0.4,
             'defeat_bonus': 30,
             'time_penalty': -0.1,
-            'successful_defense': 1.0,
+            'successful_defense': 0.8,
             "intermediate_defeat": 0,
         }
 
@@ -122,12 +127,17 @@ class GameController:
         self.total_reward += reward
         return reward, defeated
 
-    @staticmethod
-    def check_successful_defense(state_obj):
+    def check_successful_defense(self, state_obj, defense_window=5):
         """Check if a successful defense occurred."""
         hp_delta = state_obj.next_features['self_hp'] - state_obj.current_features['self_hp']
         posture_delta = state_obj.next_features['self_posture'] - state_obj.current_features['self_posture']
-        return hp_delta < 1 and posture_delta > 0
+
+        if self.frame_count >= defense_window:
+            if hp_delta < 0 and posture_delta > 10:
+                return False
+            elif hp_delta == 0 and posture_delta > 10:
+                return True
+        return False
 
     def handle_boss_low_health(self, state_obj):
         """Handle the scenario when the boss's health is low."""
@@ -199,7 +209,7 @@ class GameController:
         reward = 0
 
         # 1. Self HP loss penalty
-        if deltas['self_hp'] < 0:
+        if deltas['self_hp'] < -10:
             self_hp_loss = self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
             reward += self_hp_loss
             self.current_reward_types['self_hp_loss'] += self_hp_loss
@@ -207,7 +217,7 @@ class GameController:
             self_hp_loss = 0
 
         # 2. Boss HP loss reward
-        if deltas['boss_hp'] < 0:
+        if deltas['boss_hp'] < -2:
             boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
             reward += boss_hp_reward
             self.current_reward_types['boss_hp_loss'] += boss_hp_reward
@@ -234,7 +244,7 @@ class GameController:
             logger.info("Intermediate reward granted for boss HP below 25%.")
 
         # 4. Self posture increase penalty
-        if deltas['self_posture'] > 0 and state_obj.current_features['self_posture'] > 100:
+        if deltas['self_posture'] > 5 and state_obj.current_features['self_posture'] > 100:
             self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
             reward += self_posture_penalty
             self.current_reward_types['self_posture_increase'] += self_posture_penalty
@@ -243,7 +253,7 @@ class GameController:
             self_posture_penalty = 0
 
         # 5. Boss posture increase reward
-        if deltas['boss_posture'] > 0:
+        if deltas['boss_posture'] > 5:
             boss_posture_reward = self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
             reward += boss_posture_reward
             self.current_reward_types['boss_posture_increase'] += boss_posture_reward
@@ -252,7 +262,7 @@ class GameController:
             boss_posture_reward = 0
 
         # Log reward details
-        if self.env.target_step % 10 == 0:
+        if self.env.target_step % 20 == 0:
             logger.info(
                 f"Step {self.env.target_step}: Reward Details - "
                 f"Self HP Loss Penalty: {self_hp_loss:.2f}, "
@@ -301,7 +311,7 @@ class GameController:
         for episode in range(self.env.episodes):
             self.env.reset_marks()
             self.env.paused = pause_game(self.env.paused)
-            game_window_img, screens, remaining_uses_img = self.env.grab_screens()
+            game_window_img, screens = self.env.grab_screens()
 
             if game_window_img is None:
                 logger.warning("Failed to capture screen, skipping iteration.")
@@ -312,9 +322,18 @@ class GameController:
             state = self.env.prepare_state(resized_img)
             state_obj = GameState(features, state)
 
+            self.frame_count = 0
+
+            self.past_states.clear()
+
             while True:
                 self.env.target_step += 1
                 self.env.paused = pause_game(self.env.paused)
+
+                current_time = time.time()
+                if current_time - self.last_defense_reset_time >= 10:
+                    self.successful_defense_count = 0
+                    self.last_defense_reset_time = current_time
 
                 action_mask = self.env.get_action_mask()
 
@@ -326,18 +345,19 @@ class GameController:
                 if not self.env.manual and action is not None:
                     take_action(action, self.env.debugged, self.tool_manager)
 
-                game_window_img, screens, remaining_uses_img = self.env.grab_screens()
+                game_window_img, screens = self.env.grab_screens()
                 if game_window_img is None:
                     logger.warning("Failed to capture screen, skipping action.")
                     continue
-
-                if self.env.target_step % 100 == 0:
-                    self.env.update_remaining_uses(remaining_uses_img)
 
                 features = self.env.extract_features(screens)
                 resized_img = self.env.resize_screen(game_window_img)
                 next_state = self.env.prepare_state(resized_img)
                 state_obj.update(features, next_state)
+
+                self.frame_count += 1
+
+                self.past_states.append(state_obj)
 
                 reward, self.defeated = self.action_judge(state_obj)
 
@@ -345,7 +365,7 @@ class GameController:
                     self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,
                                                 self.defeated)
 
-                if self.env.target_step % 64 == 0:
+                if self.env.target_step % 60 == 0:
                     self.agent.train()
 
                 if self.defeated:

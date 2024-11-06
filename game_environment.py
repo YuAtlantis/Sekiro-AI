@@ -23,7 +23,7 @@ class GameEnvironment:
             'boss_blood': (57, 92, 290, 106),
             'self_posture': (395, 535, 635, 552),
             'boss_posture': (315, 73, 710, 88),
-            'remaining_uses': (955, 570, 971, 588)
+            # 'remaining_uses': (955, 570, 971, 588)
         }
         self.paused = True
         self.manual = False
@@ -44,18 +44,18 @@ class GameEnvironment:
             img = grab_full_screen()
             with self.screen_lock:
                 self.full_screen_img = img
-            time.sleep(0.05)  # Adjust the sleep time as needed
+            time.sleep(0.03)
 
     def grab_screens(self):
         """Extract necessary regions from the captured full screen image."""
         with self.screen_lock:
             if self.full_screen_img is None:
-                return None, None, None
+                return None, None
             full_screen_img = self.full_screen_img.copy()
         screens = {key: grab_region(full_screen_img, region) for key, region in self.regions.items()}
-        remaining_uses_img = screens.pop('remaining_uses', None)
+        # remaining_uses_img = screens.pop('remaining_uses', None)
         game_window_img = screens.pop('game_window')
-        return game_window_img, screens, remaining_uses_img
+        return game_window_img, screens
 
     @staticmethod
     def extract_features(screens):
