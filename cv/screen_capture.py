@@ -1,10 +1,15 @@
 # screen_capture.py
 
 import mss
+import time
 import numpy as np
 import logging
 
 logging.basicConfig(level=logging.INFO)
+
+# Initialize variables to calculate frame rate
+frame_count = 0
+start_time = time.time()
 
 
 def grab_full_screen(region=(0, 0, 1024, 620)):
@@ -17,6 +22,7 @@ def grab_full_screen(region=(0, 0, 1024, 620)):
     Returns:
         np.ndarray: The captured image in BGR format.
     """
+    global frame_count, start_time
     with mss.mss() as sct:
         monitor = {
             "top": region[1],
@@ -26,6 +32,18 @@ def grab_full_screen(region=(0, 0, 1024, 620)):
         }
         sct_img = sct.grab(monitor)
         img = np.array(sct_img)
+        # Update frame count
+        frame_count += 1
+
+        # Calculate and log frame rate every 50 frames
+        if frame_count % 50 == 0:
+            elapsed_time = time.time() - start_time
+            frame_rate = frame_count / elapsed_time
+            logging.info(f"Current frame rate: {frame_rate:.2f} FPS")
+            # Reset counters
+            frame_count = 0
+            start_time = time.time()
+
         return img[:, :, :3]
 
 

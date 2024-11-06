@@ -13,7 +13,7 @@ DEBUG_MODE = False  # Set to True to enable debugging visuals
 HEALTH_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 POSTURE_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
 
-LOG_INTERVAL = 2
+LOG_INTERVAL = 3
 last_log_time = 0
 
 
@@ -50,7 +50,6 @@ def compute_posture_percentage(indices, max_profile, total_width):
     Returns:
         float: Posture percentage (0 to 100).
     """
-    threshold = max_profile * 0.3
     if indices.size > 0:
         posture_bar_length = indices[-1] - indices[0]
         posture_percentage = (posture_bar_length / total_width) * 100

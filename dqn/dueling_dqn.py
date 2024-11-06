@@ -1,7 +1,6 @@
 import os
 import random
 import torch
-import math
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.init as init
@@ -57,7 +56,7 @@ class DuelingDQN(nn.Module):
         flattened_size = compute_flattened_size()
 
         # Set parameters for the self-attention layer
-        self.embed_dim = 64  # Embedding dimension for the attention layer
+        self.embed_dim = 128  # Embedding dimension for the attention layer
         self.seq_length = flattened_size // self.embed_dim  # Sequence length
 
         # Adjust flattened size if it is not divisible
