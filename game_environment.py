@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 class GameEnvironment:
-    def __init__(self, width=84, height=84, episodes=3000):
+    def __init__(self, width=128, height=128, episodes=3000):
         self.width = width
         self.height = height
         self.episodes = episodes

@@ -23,7 +23,7 @@ INITIAL_EPSILON = 1.0
 FINAL_EPSILON = 0.01
 EPSILON_DECAY = 50000
 LR = 0.0001
-ALPHA = 0.5
+ALPHA = 0.6
 BETA_START = 0.4
 BETA_FRAMES = 200000
 
@@ -49,7 +49,7 @@ class DuelingDQN(nn.Module):
         # Compute the flattened size of the output from convolutional layers
         def compute_flattened_size():
             with torch.no_grad():
-                dummy_input = torch.zeros(1, input_channels, 84, 84)  # Assuming input size is 84x84
+                dummy_input = torch.zeros(1, input_channels, 128, 128)
                 output = self.conv_layers(dummy_input)
                 return output.view(1, -1).size(1)
 
