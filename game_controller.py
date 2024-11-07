@@ -3,6 +3,7 @@
 import cv2
 import logging
 import time
+import numpy as np
 from game_environment import GameEnvironment
 from game_agent import GameAgent
 from game_state import GameState
@@ -59,13 +60,13 @@ class GameController:
         }
         self.reward_weights = {
             'self_hp_loss': -0.3,
-            'boss_hp_loss': 1.5,
+            'boss_hp_loss': 2.0,
             'self_death': -20,
             'self_posture_increase': -0.1,
-            'boss_posture_increase': 0.5,
+            'boss_posture_increase': 0.8,
             'defeat_bonus': 30,
             'time_penalty': -0.01,
-            'successful_defense': 1.5,
+            'successful_defense': 2.0,
             "intermediate_defeat": 0,
             'idle_penalty': -5
         }
@@ -82,6 +83,9 @@ class GameController:
             'successful_defense': []
         }
         self.current_reward_types = {key: 0 for key in self.reward_weights}
+
+        self.episode_rewards = deque(maxlen=100)
+        self.moving_average_rewards = deque(maxlen=100)
 
     def action_judge(self, state_obj):
         """Judge the action and calculate the reward."""
@@ -125,7 +129,7 @@ class GameController:
                 logger.info("Idle penalty applied due to prolonged inactivity.")
                 self.steps_since_last_attack = 0
 
-        # 6. Check for Death change the order
+        # 6. Check for Death
         if state_obj.next_features['self_hp'] <= 1:
             death_penalty = self.reward_weights['self_death']
             reward += death_penalty
@@ -251,14 +255,14 @@ class GameController:
             logger.info("Intermediate reward granted for boss HP below 25%.")
 
         # 4. Self posture increase penalty
-        if 4 < deltas['self_posture'] < 16 and state_obj.current_features['self_posture'] > 100:
+        if 3 < deltas['self_posture'] < 16 and state_obj.current_features['self_posture'] > 100:
             self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
             reward += self_posture_penalty
             self.current_reward_types['self_posture_increase'] += self_posture_penalty
             logger.info(f"Self posture increased by {deltas['self_posture']:.2f}; penalty applied: {self_posture_penalty}")
 
         # 5. Boss posture increase reward
-        if 4 < deltas['boss_posture'] < 16:
+        if 3 < deltas['boss_posture'] < 16:
             boss_posture_reward = self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
             reward += boss_posture_reward
             self.current_reward_types['boss_posture_increase'] += boss_posture_reward
@@ -271,15 +275,23 @@ class GameController:
         for key in self.reward_type_distribution:
             self.reward_type_distribution[key].append(self.current_reward_types.get(key, 0))
 
+        total_reward = sum(self.current_reward_types.values())
+        self.episode_rewards.append(total_reward)
+
+        moving_average = np.mean(self.episode_rewards) if self.episode_rewards else 0
+        self.moving_average_rewards.append(moving_average)
+
         reward_details = " | ".join([f"{key}: {value:.2f}" for key, value in self.current_reward_types.items()])
-        reward_summary = f"Episode {episode + 1} Summary: Total Reward: {sum(self.current_reward_types.values()):.2f} | {reward_details}"
+        reward_summary = (f"Episode {episode + 1} Summary: Total Reward: {total_reward:.2f} | "
+                          f"Moving Average Reward (Last {len(self.episode_rewards)}): {moving_average:.2f} | "
+                          f"{reward_details}")
 
         logger.info(reward_summary)
 
-        # Reset total reward and current reward types
+        self.agent.log_episode_reward(episode + 1, total_reward, moving_average)
+
         self.current_reward_types = {key: 0 for key in self.reward_weights}
 
-        # Reset defense count and intermediate rewards
         self.successful_defense_count = 0
         self.intermediate_rewards_given = {
             '75%': False,
@@ -287,19 +299,20 @@ class GameController:
             '25%': False
         }
 
-        # Reset idle steps
         self.steps_since_last_attack = 0
 
-        # Save model every 50 episodes
-        if episode % 50 == 0 and not self.env.debugged:
-            self.agent.save_model(episode)
+        if (episode + 1) % 50 == 0 and not self.env.debugged:
+            self.agent.save_model(episode + 1)
 
     def run(self):
-        """Run the main game_settings loop."""
+        """Run the main game loop."""
         if self.env.manual:
             start_listeners()
         logger.info("Press 'P' to start the screen capture")
-        for episode in range(self.env.episodes):
+
+        while self.agent.global_episode < self.env.episodes:
+            episode = self.agent.global_episode
+            logger.info(f"Starting Episode {episode + 1}")
             self.env.reset_marks()
             self.env.paused = pause_game(self.env.paused)
             game_window_img, screens = self.env.grab_screens()
@@ -314,7 +327,6 @@ class GameController:
             state_obj = GameState(features, state)
 
             self.frame_count = 0
-
             self.past_states.clear()
 
             while True:
@@ -354,12 +366,11 @@ class GameController:
                     boss_hp = features['boss_hp']
                     self_posture = features['self_posture']
                     boss_posture = features['boss_posture']
-                    logging.info(f'Player Health: {self_hp:.2f}%, Boss Health: {boss_hp:.2f}%, '
-                                 f'Player Posture: {self_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
+                    logger.info(f'Player Health: {self_hp:.2f}%, Boss Health: {boss_hp:.2f}%, '
+                                f'Player Posture: {self_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
                     self.last_feature_log_time = current_time
 
                 self.frame_count += 1
-
                 self.past_states.append(state_obj)
 
                 reward, self.defeated = self.action_judge(state_obj)
@@ -371,19 +382,22 @@ class GameController:
                         logger.info("Idle penalty applied due to prolonged same activity.")
 
                 if action is not None:
-                    self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,
-                                                self.defeated)
+                    self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state, self.defeated)
 
-                if self.env.target_step % 60 == 0:
+                if self.env.target_step % 100 == 0:
                     self.agent.train()
 
                 if self.defeated:
                     break
 
             self.post_episode_updates(episode)
+            self.agent.global_episode += 1
+
             restart(self.env, self.defeated, self.defeat_count)
+            logger.info(f"Ending Episode {episode + 1}")
 
         cv2.destroyAllWindows()
+        self.agent.close_writer()
 
     @staticmethod
     def get_manual_action():

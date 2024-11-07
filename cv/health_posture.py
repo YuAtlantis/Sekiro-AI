@@ -1,7 +1,6 @@
 # health_posture.py
 
 import cv2
-import time
 import numpy as np
 import logging
 from numba import njit

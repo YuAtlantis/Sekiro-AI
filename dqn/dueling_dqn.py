@@ -1,14 +1,15 @@
 import os
 import random
 import torch
+import numpy as np
+import torch.optim.lr_scheduler as lr_scheduler
+import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.init as init
 from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
-import numpy as np
-import torch.optim.lr_scheduler as lr_scheduler
-import torch.nn.functional as F
+from datetime import datetime
 
 # Experience replay buffer size
 REPLAY_SIZE = 524288
@@ -218,6 +219,8 @@ class PrioritizedReplayBuffer:
 class DQNAgent:
     def __init__(self, input_channels, action_space, model_file, model_folder):
         self.global_step = 0
+        self.global_episode = 0
+
         self.state_dim = input_channels
         self.action_space = action_space
         self.replay_buffer = PrioritizedReplayBuffer(REPLAY_SIZE)
@@ -242,6 +245,9 @@ class DQNAgent:
         # Load checkpoint or DQN
         self.load_checkpoint_or_model()
 
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.writer = SummaryWriter(log_dir=f'./logs/run_{timestamp}')
+
     def load_checkpoint_or_model(self):
         checkpoint_dir = self.model_folder
         if os.path.exists(checkpoint_dir) and os.path.isdir(checkpoint_dir):
@@ -262,6 +268,7 @@ class DQNAgent:
                 if 'scheduler_state_dict' in checkpoint:
                     self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
                 self.global_step = checkpoint.get('global_step', 0)
+                self.global_episode = checkpoint.get('global_episode', 0)
                 self.epsilon = checkpoint.get('epsilon', INITIAL_EPSILON)
                 self.beta = checkpoint.get('beta', BETA_START)
                 self.best_reward = checkpoint.get('best_reward', -float('inf'))  # Restore best reward
@@ -471,12 +478,13 @@ class DQNAgent:
         checkpoint_path = os.path.join(self.model_folder, f"checkpoint_step_{self.global_step}.pth")
         torch.save({
             'global_step': self.global_step,
+            'global_episode': self.global_episode,
             'model_state_dict': self.eval_net.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'epsilon': self.epsilon,
             'beta': self.beta,
-            'best_reward': self.best_reward,  # Save best reward
+            'best_reward': self.best_reward,
         }, checkpoint_path)
         print(f"Checkpoint saved at step {self.global_step} to {checkpoint_path}")
 
@@ -495,11 +503,13 @@ class DQNAgent:
         """Save the model and optimizer state at a given episode."""
         save_path = f'{self.model_folder}/dueling_dqn_episode_{episode}.pth'
         torch.save({
+            'global_step': self.global_step,
+            'global_episode': self.global_episode,
             'model_state_dict': self.eval_net.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'epsilon': self.epsilon,
-            'best_reward': self.best_reward,  # Save best reward
+            'best_reward': self.best_reward,
         }, save_path)
         print(f"Model saved at episode {episode} to {save_path}")
 
@@ -510,6 +520,7 @@ class DQNAgent:
         best_model_path = os.path.join(self.model_folder, "best_model.pth")
         torch.save({
             'global_step': self.global_step,
+            'global_episode': self.global_episode,
             'model_state_dict': self.eval_net.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
