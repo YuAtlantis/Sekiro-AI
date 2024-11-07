@@ -1,6 +1,9 @@
+import gzip
 import os
+import pickle
 import random
 import torch
+import threading
 import numpy as np
 import torch.optim.lr_scheduler as lr_scheduler
 import torch.nn.functional as F
@@ -9,10 +12,9 @@ import torch.optim as optim
 import torch.nn.init as init
 from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
-from datetime import datetime
 
 # Experience replay buffer size
-REPLAY_SIZE = 524288
+REPLAY_SIZE = 100000
 # Minibatch size
 SMALL_BATCH_SIZE = 64
 BIG_BATCH_SIZE = 128
@@ -24,7 +26,7 @@ INITIAL_EPSILON = 1.0
 FINAL_EPSILON = 0.01
 EPSILON_DECAY = 50000
 LR = 0.0001
-ALPHA = 0.6
+ALPHA = 0.4
 BETA_START = 0.4
 BETA_FRAMES = 200000
 
@@ -235,73 +237,16 @@ class DQNAgent:
         self.beta = BETA_START
         self.model_folder = model_folder
         self.model_file = model_file
-        self.writer = SummaryWriter(log_dir=f'./logs/run_{self.global_step}')
         self.scaler = GradScaler()
 
         # Added: Initialize best reward
-        self.best_reward = -float(
-            'inf')  # Initialize to negative infinity to ensure the first reward is recorded as best
+        self.best_reward = -float('inf')
 
-        # Load checkpoint or DQN
+        # Load checkpoint or replay_buffer
+        self.load_largest_replay_buffer()
         self.load_checkpoint_or_model()
 
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.writer = SummaryWriter(log_dir=f'./logs/run_{timestamp}')
-
-    def load_checkpoint_or_model(self):
-        checkpoint_dir = self.model_folder
-        if os.path.exists(checkpoint_dir) and os.path.isdir(checkpoint_dir):
-            checkpoints = sorted(
-                [f for f in os.listdir(checkpoint_dir) if f.startswith("checkpoint_step_") and f.endswith('.pth')],
-                key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)),
-                reverse=True
-            )
-            if checkpoints:
-                checkpoint_path = os.path.join(checkpoint_dir, checkpoints[0])
-                print(f"Loading checkpoint from {checkpoint_path}...\n")
-
-                checkpoint = torch.load(checkpoint_path, map_location=device)
-
-                self.eval_net.load_state_dict(checkpoint['model_state_dict'])
-                self.target_net.load_state_dict(checkpoint['model_state_dict'])  # Ensure target_net is synced
-                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                if 'scheduler_state_dict' in checkpoint:
-                    self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-                self.global_step = checkpoint.get('global_step', 0)
-                self.global_episode = checkpoint.get('global_episode', 0)
-                self.epsilon = checkpoint.get('epsilon', INITIAL_EPSILON)
-                self.beta = checkpoint.get('beta', BETA_START)
-                self.best_reward = checkpoint.get('best_reward', -float('inf'))  # Restore best reward
-                print(
-                    f"Checkpoint loaded successfully. Global Step: {self.global_step}, Best Reward: {self.best_reward}")
-                return  # Successfully loaded from checkpoint
-
-        # If no checkpoints found, try to load from model_file
-        print("No checkpoints found. Attempting to load model from file...\n")
-        self.load_model()
-
-    def load_model(self):
-        """Load the model and optimizer state from a file."""
-        if os.path.exists(self.model_file):
-            try:
-                checkpoint = torch.load(self.model_file, map_location=device)
-                self.eval_net.load_state_dict(checkpoint['model_state_dict'])
-                self.target_net.load_state_dict(checkpoint['model_state_dict'])  # Ensure target_net is synced
-                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                if 'scheduler_state_dict' in checkpoint:
-                    self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-                self.epsilon = checkpoint.get('epsilon', INITIAL_EPSILON)
-                self.beta = checkpoint.get('beta', BETA_START)
-                self.global_step = checkpoint.get('global_step', 0)
-                self.best_reward = checkpoint.get('best_reward', -float('inf'))  # Restore best reward
-                print(f"Model loaded successfully from {self.model_file}. Best Reward: {self.best_reward}")
-            except Exception as e:
-                print(f"Failed to load model from {self.model_file}: {e}")
-                print("Initializing networks randomly.")
-                self.initialize_networks()
-        else:
-            print(f"Model file {self.model_file} does not exist. Initializing networks randomly.")
-            self.initialize_networks()
+        self.writer = SummaryWriter(log_dir='./logs')
 
     def initialize_networks(self):
         """Initialize networks with random weights."""
@@ -376,10 +321,19 @@ class DQNAgent:
         current_lr = self.optimizer.param_groups[0]['lr']
         self.writer.add_scalar('Learning Rate', current_lr, self.global_step)
 
-    def train(self, batch_size):
-        if len(self.replay_buffer) < batch_size:
+    def train(self, batch_size, buffer_size):
+        if len(self.replay_buffer) < buffer_size:
+            self.global_step += 1
+            print(f"Current Replay Buffer Size: {len(self.replay_buffer)} and global step: {self.global_step}")
+            if self.global_step % 20 == 0:
+                replay_buffer_size = len(self.replay_buffer)
+                replay_buffer_path = os.path.join(
+                    self.model_folder,
+                    f"replay_buffer_size_{replay_buffer_size}.pkl.gz"
+                )
+                self.save_replay_buffer_async(replay_buffer_path)
             return
-
+        print(f"Start Training Under Buffer Size: {len(self.replay_buffer)}")
         # Update Beta value for prioritized experience replay
         self.beta = min(1.0, self.beta + (1.0 - BETA_START) / BETA_FRAMES)
 
@@ -413,9 +367,12 @@ class DQNAgent:
         # Backpropagation and optimization
         self.optimizer.zero_grad()
         self.scaler.scale(loss).backward()
+
         # Gradient clipping
         self.scaler.unscale_(self.optimizer)
         total_norm = torch.nn.utils.clip_grad_norm_(self.eval_net.parameters(), max_norm=1)
+
+        # Optimizer step
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
@@ -474,7 +431,19 @@ class DQNAgent:
             self.best_reward = reward_sum
             self.save_best_model()
 
+    def save_replay_buffer(self, path):
+        """Save the replay buffer to a compressed file."""
+        with gzip.open(path, 'wb') as f:
+            pickle.dump(self.replay_buffer, f)
+        print(f"Replay buffer saved to {path}")
+
+    def save_replay_buffer_async(self, path):
+        """Asynchronously save the replay buffer."""
+        thread = threading.Thread(target=self.save_replay_buffer, args=(path,))
+        thread.start()
+
     def save_checkpoint(self):
+        # Save the model checkpoint
         checkpoint_path = os.path.join(self.model_folder, f"checkpoint_step_{self.global_step}.pth")
         torch.save({
             'global_step': self.global_step,
@@ -491,27 +460,97 @@ class DQNAgent:
         with open(os.path.join(self.model_folder, "last_step.txt"), "w") as f:
             f.write(str(self.global_step))
 
-        checkpoints = [f for f in os.listdir(self.model_folder) if
-                       f.startswith("checkpoint_step_") and f.endswith('.pth')]
-        if len(checkpoints) > 20:
-            checkpoints.sort(key=lambda x: os.path.getmtime(os.path.join(self.model_folder, x)))
-            oldest_checkpoint = checkpoints[0]
-            os.remove(os.path.join(self.model_folder, oldest_checkpoint))
-            print(f"Deleted oldest checkpoint: {oldest_checkpoint}")
+        # Manage old checkpoints and replay buffer files
+        self.manage_old_checkpoints()
 
-    def save_model(self, episode):
-        """Save the model and optimizer state at a given episode."""
-        save_path = f'{self.model_folder}/dueling_dqn_episode_{episode}.pth'
-        torch.save({
-            'global_step': self.global_step,
-            'global_episode': self.global_episode,
-            'model_state_dict': self.eval_net.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict(),
-            'epsilon': self.epsilon,
-            'best_reward': self.best_reward,
-        }, save_path)
-        print(f"Model saved at episode {episode} to {save_path}")
+    def load_checkpoint_or_model(self):
+        # Load the model checkpoint
+        checkpoint_dir = self.model_folder
+        if os.path.exists(checkpoint_dir) and os.path.isdir(checkpoint_dir):
+            checkpoints = sorted(
+                [f for f in os.listdir(checkpoint_dir) if f.startswith("checkpoint_step_") and f.endswith('.pth')],
+                key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)),
+                reverse=True
+            )
+            if checkpoints:
+                checkpoint_path = os.path.join(checkpoint_dir, checkpoints[0])
+                print(f"Loading checkpoint from {checkpoint_path}...\n")
+
+                checkpoint = torch.load(checkpoint_path, map_location=device)
+
+                self.eval_net.load_state_dict(checkpoint['model_state_dict'])
+                self.target_net.load_state_dict(checkpoint['model_state_dict'])  # Ensure target_net is synced
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                if 'scheduler_state_dict' in checkpoint:
+                    self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                self.global_step = checkpoint.get('global_step', 0)
+                self.global_episode = checkpoint.get('global_episode', 0)
+                self.epsilon = checkpoint.get('epsilon', INITIAL_EPSILON)
+                self.beta = checkpoint.get('beta', BETA_START)
+                self.best_reward = checkpoint.get('best_reward', -float('inf'))  # Restore best reward
+
+                print(
+                    f"Checkpoint loaded successfully. Global Step: {self.global_step}, Best Reward: {self.best_reward}")
+                return  # Successfully loaded from checkpoint
+
+        # If no checkpoints found, try to load from model_file
+        print("No checkpoints found. Attempting to load model from file...\n")
+        self.load_model()
+
+    def load_model(self):
+        """Load the model and optimizer state from a file."""
+        if os.path.exists(self.model_file):
+            try:
+                checkpoint = torch.load(self.model_file, map_location=device)
+                self.eval_net.load_state_dict(checkpoint['model_state_dict'])
+                self.target_net.load_state_dict(checkpoint['model_state_dict'])  # Ensure target_net is synced
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                if 'scheduler_state_dict' in checkpoint:
+                    self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                self.epsilon = checkpoint.get('epsilon', INITIAL_EPSILON)
+                self.beta = checkpoint.get('beta', BETA_START)
+                self.global_step = checkpoint.get('global_step', 0)
+                self.global_episode = checkpoint.get('global_episode', 0)
+                self.best_reward = checkpoint.get('best_reward', -float('inf'))  # Restore best reward
+
+                print(f"Model loaded successfully from {self.model_file}. Best Reward: {self.best_reward}")
+            except Exception as e:
+                print(f"Failed to load model from {self.model_file}: {e}")
+                print("Initializing networks randomly.")
+                self.initialize_networks()
+        else:
+            print(f"Model file {self.model_file} does not exist. Initializing networks randomly.")
+            self.initialize_networks()
+
+    def load_largest_replay_buffer(self):
+        """Load the replay buffer with the largest size from the model folder."""
+        replay_buffer_files = [
+            f for f in os.listdir(self.model_folder)
+            if f.startswith('replay_buffer_size_') and f.endswith('.pkl.gz')
+        ]
+        if replay_buffer_files:
+            # Extract sizes from filenames
+            sizes_and_files = []
+            for filename in replay_buffer_files:
+                size_part = filename[len('replay_buffer_size_'):]
+                size_str = size_part.split('_step_')[0]
+                try:
+                    size = int(size_str)
+                    sizes_and_files.append((size, filename))
+                except ValueError:
+                    pass
+            if sizes_and_files:
+                # Get the file with the largest size
+                sizes_and_files.sort(reverse=True)
+                largest_size, largest_file = sizes_and_files[0]
+                replay_buffer_path = os.path.join(self.model_folder, largest_file)
+                self.load_replay_buffer(replay_buffer_path)
+            else:
+                print("No valid replay buffer files found. Starting with an empty replay buffer.")
+                self.replay_buffer = PrioritizedReplayBuffer(REPLAY_SIZE)
+        else:
+            print("No replay buffer files found. Starting with an empty replay buffer.")
+            self.replay_buffer = PrioritizedReplayBuffer(REPLAY_SIZE)
 
     def save_best_model(self):
         """
@@ -529,3 +568,44 @@ class DQNAgent:
             'best_reward': self.best_reward,
         }, best_model_path)
         print(f"Best model saved with reward {self.best_reward} at {best_model_path}")
+
+    def manage_old_checkpoints(self, max_checkpoints=20):
+        # Get list of checkpoint files
+        checkpoints = [f for f in os.listdir(self.model_folder) if
+                       f.startswith("checkpoint_step_") and f.endswith('.pth')]
+        if len(checkpoints) > max_checkpoints:
+            # Sort checkpoints by modification time
+            checkpoints.sort(key=lambda x: os.path.getmtime(os.path.join(self.model_folder, x)))
+            for checkpoint in checkpoints[:-max_checkpoints]:
+                checkpoint_path = os.path.join(self.model_folder, checkpoint)
+                os.remove(checkpoint_path)
+                print(f"Deleted old checkpoint: {checkpoint_path}")
+
+        # Get list of replay buffer files
+        replay_buffers = [f for f in os.listdir(self.model_folder) if
+                          f.startswith("replay_buffer_size_") and f.endswith('.pkl.gz')]
+        if len(replay_buffers) > 5:
+            # Sort replay buffers by size and modification time
+            replay_buffers.sort(key=lambda x: (
+                int(x.split('_')[3]),  # Extract size
+                os.path.getmtime(os.path.join(self.model_folder, x))
+            ))
+            for rb_file in replay_buffers[:-max_checkpoints]:
+                rb_file_path = os.path.join(self.model_folder, rb_file)
+                os.remove(rb_file_path)
+                print(f"Deleted old replay buffer: {rb_file_path}")
+
+    def load_replay_buffer(self, path):
+        """Load the replay buffer from a compressed file."""
+        if os.path.exists(path):
+            try:
+                with gzip.open(path, 'rb') as f:
+                    self.replay_buffer = pickle.load(f)
+                print(f"Replay buffer loaded from {path}")
+            except Exception as e:
+                print(f"Failed to load replay buffer from {path}: {e}")
+                print("Starting with an empty replay buffer.")
+                self.replay_buffer = PrioritizedReplayBuffer(REPLAY_SIZE)
+        else:
+            print(f"Replay buffer file {path} does not exist. Starting with an empty replay buffer.")
+            self.replay_buffer = PrioritizedReplayBuffer(REPLAY_SIZE)

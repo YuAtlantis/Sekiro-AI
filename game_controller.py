@@ -35,7 +35,7 @@ class GameController:
         self.defeat_count = 0
 
         self.missing_boss_hp_steps = 0
-        self.boss_lives = 1
+        self.boss_lives = 2
 
         self.successful_defense_count = 0
         self.max_defense_rewards = 10
@@ -60,13 +60,13 @@ class GameController:
         }
         self.reward_weights = {
             'self_hp_loss': -0.3,
-            'boss_hp_loss': 2.0,
-            'self_death': -20,
-            'self_posture_increase': -0.1,
-            'boss_posture_increase': 0.8,
+            'boss_hp_loss': 2.1,
+            'self_death': -15,
+            'self_posture_increase': -0.3,
+            'boss_posture_increase': 1.2,
             'defeat_bonus': 30,
             'time_penalty': -0.01,
-            'successful_defense': 2.0,
+            'successful_defense': 3.0,
             "intermediate_defeat": 0,
             'idle_penalty': -5
         }
@@ -148,7 +148,7 @@ class GameController:
         if self.frame_count % defense_window == 0:
             if hp_delta < 0 or 16 < posture_delta:
                 return False
-            elif hp_delta == 0 and 2 < posture_delta < 16:
+            elif hp_delta == 0 and 4 < posture_delta < 16:
                 return True
         return False
 
@@ -169,7 +169,7 @@ class GameController:
 
             reward = self.attack_in_low_health_phase(state_obj)
 
-            if self.missing_boss_hp_steps > 40:
+            if self.missing_boss_hp_steps > 20:
                 defeat_bonus = self.reward_weights.get('defeat_bonus')
                 reward += defeat_bonus
                 self.defeated = 2
@@ -229,7 +229,7 @@ class GameController:
             logger.info(f"Self HP reduced: {abs(deltas['self_hp'])} ; penalty applied: {self_hp_loss}")
 
         # 2. Boss HP loss reward
-        if -6 < deltas['boss_hp'] < -2:
+        if -6 < deltas['boss_hp'] < -3:
             boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
             reward += boss_hp_reward
             self.current_reward_types['boss_hp_loss'] += boss_hp_reward
@@ -301,9 +301,6 @@ class GameController:
 
         self.steps_since_last_attack = 0
 
-        if (episode + 1) % 50 == 0 and not self.env.debugged:
-            self.agent.save_model(episode + 1)
-
     def run(self):
         """Run the main game loop."""
         if self.env.manual:
@@ -360,12 +357,13 @@ class GameController:
                 next_state = self.env.prepare_state(resized_img)
                 state_obj.update(features, next_state)
 
+                self_hp = features['self_hp']
+                boss_hp = features['boss_hp']
+                self_posture = features['self_posture']
+                boss_posture = features['boss_posture']
+
                 current_time = time.time()
                 if current_time - self.last_feature_log_time >= 1:
-                    self_hp = features['self_hp']
-                    boss_hp = features['boss_hp']
-                    self_posture = features['self_posture']
-                    boss_posture = features['boss_posture']
                     logger.info(f'Player Health: {self_hp:.2f}%, Boss Health: {boss_hp:.2f}%, '
                                 f'Player Posture: {self_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
                     self.last_feature_log_time = current_time
@@ -384,7 +382,7 @@ class GameController:
                 if action is not None:
                     self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state, self.defeated)
 
-                if self.env.target_step % 100 == 0:
+                if self.env.target_step % 50 == 0:
                     self.agent.train()
 
                 if self.defeated:
