@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 
 # Experience replay buffer size
-REPLAY_SIZE = 100000
+REPLAY_SIZE = 10000
 # Minibatch size
 SMALL_BATCH_SIZE = 64
 BIG_BATCH_SIZE = 128
@@ -325,7 +325,7 @@ class DQNAgent:
         if len(self.replay_buffer) < buffer_size:
             self.global_step += 1
             print(f"Current Replay Buffer Size: {len(self.replay_buffer)} and global step: {self.global_step}")
-            if self.global_step % 20 == 0:
+            if self.global_step % 5 == 0:
                 replay_buffer_size = len(self.replay_buffer)
                 replay_buffer_path = os.path.join(
                     self.model_folder,
@@ -532,9 +532,8 @@ class DQNAgent:
             # Extract sizes from filenames
             sizes_and_files = []
             for filename in replay_buffer_files:
-                size_part = filename[len('replay_buffer_size_'):]
-                size_str = size_part.split('_step_')[0]
                 try:
+                    size_str = filename[len('replay_buffer_size_'):-len('.pkl.gz')]
                     size = int(size_str)
                     sizes_and_files.append((size, filename))
                 except ValueError:
@@ -544,6 +543,7 @@ class DQNAgent:
                 sizes_and_files.sort(reverse=True)
                 largest_size, largest_file = sizes_and_files[0]
                 replay_buffer_path = os.path.join(self.model_folder, largest_file)
+                print(f"Loading replay buffer from {replay_buffer_path} with size {largest_size}...")
                 self.load_replay_buffer(replay_buffer_path)
             else:
                 print("No valid replay buffer files found. Starting with an empty replay buffer.")
@@ -569,7 +569,7 @@ class DQNAgent:
         }, best_model_path)
         print(f"Best model saved with reward {self.best_reward} at {best_model_path}")
 
-    def manage_old_checkpoints(self, max_checkpoints=20):
+    def manage_old_checkpoints(self, max_checkpoints=12):
         # Get list of checkpoint files
         checkpoints = [f for f in os.listdir(self.model_folder) if
                        f.startswith("checkpoint_step_") and f.endswith('.pth')]

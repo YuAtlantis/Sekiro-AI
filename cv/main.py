@@ -17,7 +17,7 @@ def main():
         'boss_posture': (315, 73, 710, 88)
     }
 
-    log_interval = 2
+    log_interval = 0.5
     last_log_time = time.time()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:

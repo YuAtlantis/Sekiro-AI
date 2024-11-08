@@ -59,11 +59,11 @@ class GameController:
             '25%': False
         }
         self.reward_weights = {
-            'self_hp_loss': -0.3,
+            'self_hp_loss': -0.2,
             'boss_hp_loss': 2.1,
-            'self_death': -15,
-            'self_posture_increase': -0.3,
-            'boss_posture_increase': 1.2,
+            'self_death': -10,
+            'self_posture_increase': -0.1,
+            'boss_posture_increase': 0.6,
             'defeat_bonus': 30,
             'time_penalty': -0.01,
             'successful_defense': 3.0,
@@ -81,6 +81,12 @@ class GameController:
             'idle_penalty': [],
             'time_penalty': [],
             'successful_defense': []
+        }
+        self.flags = {
+            'self_hp_loss': False,
+            'boss_hp_loss': False,
+            'self_posture_increase': False,
+            'boss_posture_increase': False,
         }
         self.current_reward_types = {key: 0 for key in self.reward_weights}
 
@@ -222,19 +228,27 @@ class GameController:
         reward = 0
 
         # 1. Self HP loss penalty
-        if deltas['self_hp'] < -10:
-            self_hp_loss = self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
-            reward += self_hp_loss
-            self.current_reward_types['self_hp_loss'] += self_hp_loss
-            logger.info(f"Self HP reduced: {abs(deltas['self_hp'])} ; penalty applied: {self_hp_loss}")
+        if -45 < deltas['self_hp'] < -10:
+            if not self.flags['self_hp_loss']:
+                self_hp_loss = self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
+                reward += self_hp_loss
+                self.current_reward_types['self_hp_loss'] += self_hp_loss
+                self.flags['self_hp_loss'] = True
+                logger.info(f"Self HP reduced: {abs(deltas['self_hp'])} ; penalty applied: {self_hp_loss}")
+        else:
+            self.flags['self_hp_loss'] = False
 
         # 2. Boss HP loss reward
         if -6 < deltas['boss_hp'] < -3:
-            boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
-            reward += boss_hp_reward
-            self.current_reward_types['boss_hp_loss'] += boss_hp_reward
-            self.steps_since_last_attack = 0  # Reset idle counter on successful attack
-            logger.info(f"Boss HP reduced: {abs(deltas['boss_hp'])} ; reward applied: {boss_hp_reward}")
+            if not self.flags['boss_hp_loss']:
+                boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
+                reward += boss_hp_reward
+                self.current_reward_types['boss_hp_loss'] += boss_hp_reward
+                self.steps_since_last_attack = 0  # Reset idle counter on successful attack
+                self.flags['boss_hp_loss'] = True
+                logger.info(f"Boss HP reduced: {abs(deltas['boss_hp'])} ; reward applied: {boss_hp_reward}")
+        else:
+            self.flags['boss_hp_loss'] = False
 
         # 3. Intermediate rewards based on boss HP thresholds
         boss_hp_percentage = state_obj.next_features['boss_hp']
@@ -255,18 +269,28 @@ class GameController:
             logger.info("Intermediate reward granted for boss HP below 25%.")
 
         # 4. Self posture increase penalty
-        if 3 < deltas['self_posture'] < 16 and state_obj.current_features['self_posture'] > 100:
-            self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
-            reward += self_posture_penalty
-            self.current_reward_types['self_posture_increase'] += self_posture_penalty
-            logger.info(f"Self posture increased by {deltas['self_posture']:.2f}; penalty applied: {self_posture_penalty}")
+        if 5 < deltas['self_posture'] < 15 and state_obj.current_features['self_posture'] > 90:
+            if not self.flags['self_posture_increase']:
+                self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
+                reward += self_posture_penalty
+                self.current_reward_types['self_posture_increase'] += self_posture_penalty
+                self.flags['self_posture_increase'] = True
+                logger.info(
+                    f"Self posture increased by {deltas['self_posture']:.2f}; penalty applied: {self_posture_penalty}")
+        else:
+            self.flags['self_posture_increase'] = False
 
         # 5. Boss posture increase reward
-        if 3 < deltas['boss_posture'] < 16:
-            boss_posture_reward = self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
-            reward += boss_posture_reward
-            self.current_reward_types['boss_posture_increase'] += boss_posture_reward
-            logger.info(f"Boss posture increased by {deltas['boss_posture']:.2f}; reward applied: {boss_posture_reward}")
+        if 3 < deltas['boss_posture'] < 9:
+            if not self.flags['boss_posture_increase']:
+                boss_posture_reward = self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
+                reward += boss_posture_reward
+                self.current_reward_types['boss_posture_increase'] += boss_posture_reward
+                self.flags['boss_posture_increase'] = True
+                logger.info(
+                    f"Boss posture increased by {deltas['boss_posture']:.2f}; reward applied: {boss_posture_reward}")
+        else:
+            self.flags['boss_posture_increase'] = False
 
         return reward
 
@@ -380,10 +404,13 @@ class GameController:
                         logger.info("Idle penalty applied due to prolonged same activity.")
 
                 if action is not None:
-                    self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state, self.defeated)
+                    self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,
+                                                self.defeated)
 
-                if self.env.target_step % 50 == 0:
-                    self.agent.train()
+                if self.env.target_step % 60 == 0:
+                    self.env.train_mark += 1
+                    if self.env.train_mark % 5 == 0:
+                        self.agent.train()
 
                 if self.defeated:
                     break

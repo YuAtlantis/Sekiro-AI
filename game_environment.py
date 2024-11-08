@@ -29,8 +29,8 @@ class GameEnvironment:
         self.manual = False
         self.debugged = False
         self.tool_manager = None
-        self.self_stop_mark = 0
         self.target_step = 0
+        self.train_mark = 0
         self.action_space_size = 4
         self.current_remaining_uses = 19
         self.screen_lock = threading.Lock()
@@ -44,7 +44,7 @@ class GameEnvironment:
             img = grab_full_screen()
             with self.screen_lock:
                 self.full_screen_img = img
-            time.sleep(0.03)
+            time.sleep(0.02)
 
     def grab_screens(self):
         """Extract necessary regions from the captured full screen image."""
@@ -95,7 +95,7 @@ class GameEnvironment:
 
     def reset_marks(self):
         """Reset various counters and flags."""
-        self.self_stop_mark = 0
+        self.train_mark = 0
         self.target_step = 0
 
     def get_action_mask(self):

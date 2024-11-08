@@ -114,7 +114,7 @@ def calculate_posture_percentage(posture_bar_image):
     hsv = cv2.cvtColor(posture_bar_image, cv2.COLOR_BGR2HSV)
 
     # Define posture bar color range (yellow/orange)
-    lower_color = np.array([15, 100, 100])
+    lower_color = np.array([10, 100, 100])
     upper_color = np.array([35, 255, 255])
 
     mask = cv2.inRange(hsv, lower_color, upper_color)
