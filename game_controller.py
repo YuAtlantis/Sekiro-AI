@@ -27,14 +27,14 @@ class GameController:
     def __init__(self):
         self.last_feature_log_time = 0
         self.last_time_penalty_update = time.time()
-        self.time_penalty_increment = -0.004
+        self.time_penalty_increment = -0.001
 
         self.last_actions = deque(maxlen=12)
 
         self.defeated = 0
 
         self.missing_boss_hp_steps = 0
-        self.boss_lives = 3
+        self.boss_lives = 2
 
         self.steps_since_last_attack = 0
         self.idle_threshold = 10
@@ -50,13 +50,13 @@ class GameController:
             '25%': False
         }
         self.reward_weights = {
-            'self_hp_loss': -0.2,
-            'boss_hp_loss': 2.0,
-            'self_death': -10,
-            'self_posture_increase': -0.2,
+            'self_hp_loss': -0.3,
+            'boss_hp_loss': 2.2,
+            'self_death': -15,
+            'self_posture_increase': -0.3,
             'boss_posture_increase': 0.6,
             'defeat_bonus': 40,
-            'time_penalty': -0.01,
+            'time_penalty': -0.005,
             "intermediate_defeat": 0,
             'idle_penalty': -5
         }

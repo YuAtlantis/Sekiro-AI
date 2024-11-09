@@ -29,7 +29,7 @@ class GameAgent:
         """Store a transition in the replay buffer."""
         self.dqn_agent.store_transition(*args)
 
-    def train(self, batch_size=None, buffer_size=6000):
+    def train(self, batch_size=None, buffer_size=5000):
         """Train the DQN agent."""
         if batch_size is None:
             batch_size = self.TRAIN_BATCH_SIZE

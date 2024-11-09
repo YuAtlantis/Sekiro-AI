@@ -322,8 +322,9 @@ class DQNAgent:
         self.writer.add_scalar('Learning Rate', current_lr, self.global_step)
 
     def train(self, batch_size, buffer_size):
+        self.global_step += 1
+
         if len(self.replay_buffer) < buffer_size:
-            self.global_step += 1
             print(f"Current Replay Buffer Size: {len(self.replay_buffer)} and global step: {self.global_step}")
             if self.global_step % 5 == 0:
                 replay_buffer_size = len(self.replay_buffer)
@@ -333,6 +334,7 @@ class DQNAgent:
                 )
                 self.save_replay_buffer_async(replay_buffer_path)
             return
+
         print(f"Start Training Under Buffer Size: {len(self.replay_buffer)}")
         # Update Beta value for prioritized experience replay
         self.beta = min(1.0, self.beta + (1.0 - BETA_START) / BETA_FRAMES)
@@ -412,9 +414,6 @@ class DQNAgent:
         td_errors_cpu = td_errors.detach().cpu().numpy()
         abs_td_errors = np.abs(td_errors_cpu)
         self.replay_buffer.update(idxs, abs_td_errors)
-
-        # Increment global steps
-        self.global_step += 1
 
         # Periodically update target network
         self.update_target_network()
