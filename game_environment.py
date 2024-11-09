@@ -44,7 +44,8 @@ class GameEnvironment:
             img = grab_full_screen()
             with self.screen_lock:
                 self.full_screen_img = img
-            time.sleep(0.02)
+            # Frame control
+            time.sleep(0.06)
 
     def grab_screens(self):
         """Extract necessary regions from the captured full screen image."""
@@ -92,11 +93,6 @@ class GameEnvironment:
         img_tensor = img_tensor.squeeze(0)  # [C, H, W]
 
         return img_tensor
-
-    def reset_marks(self):
-        """Reset various counters and flags."""
-        self.train_mark = 0
-        self.target_step = 0
 
     def get_action_mask(self):
         """Generate a mask for valid actions based on tool cooldowns."""

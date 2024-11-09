@@ -33,13 +33,13 @@ def focus_game_window():
         print("Game window not found")
 
 
-def restart(env, defeated, defeat_count):
+def restart(env, defeated):
     def reset_actions_and_pause():
         pause_game(True)
 
     def restart_sequence():
         print("-------------------------Waiting for 6 seconds to restart the game-------------------------")
-        time.sleep(5.5)
+        time.sleep(7.5)
         focus_game_window()
         input_keys.lock_vision()
         time.sleep(0.5)
@@ -52,7 +52,7 @@ def restart(env, defeated, defeat_count):
         else:
             restart_sequence()
     elif defeated == 2:
-        print(f"-------------------------You beat the boss {defeat_count} times-------------------------")
+        print(f"-------------------------You beat the boss finally!-------------------------")
         reset_actions_and_pause()
 
 

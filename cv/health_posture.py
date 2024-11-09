@@ -34,13 +34,12 @@ def compute_health_percentage(w, total_width):
 
 
 @njit
-def compute_posture_percentage(indices, max_profile, total_width):
+def compute_posture_percentage(indices, total_width):
     """
     Compute the posture percentage based on indices and maximum profile value.
 
     Args:
         indices (1D array): Indices where profile > threshold.
-        max_profile (float): Maximum value in the profile.
         total_width (float): Total possible width of the posture bar.
 
     Returns:
@@ -126,7 +125,7 @@ def calculate_posture_percentage(posture_bar_image):
 
     # Use Numba-accelerated function to compute posture percentage
     indices = np.where(profile > (np.max(profile) * 0.3))[0]
-    posture_percentage = compute_posture_percentage(indices, np.max(profile), mask.shape[1])
+    posture_percentage = compute_posture_percentage(indices, mask.shape[1])
 
     return posture_percentage
 
