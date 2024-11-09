@@ -44,8 +44,6 @@ class GameEnvironment:
             img = grab_full_screen()
             with self.screen_lock:
                 self.full_screen_img = img
-            # Frame control
-            time.sleep(0.06)
 
     def grab_screens(self):
         """Extract necessary regions from the captured full screen image."""

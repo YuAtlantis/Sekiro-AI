@@ -51,11 +51,11 @@ class GameController:
         }
         self.reward_weights = {
             'self_hp_loss': -0.2,
-            'boss_hp_loss': 2.2,
+            'boss_hp_loss': 2.0,
             'self_death': -10,
-            'self_posture_increase': -0.1,
+            'self_posture_increase': -0.2,
             'boss_posture_increase': 0.6,
-            'defeat_bonus': 30,
+            'defeat_bonus': 40,
             'time_penalty': -0.01,
             "intermediate_defeat": 0,
             'idle_penalty': -5
@@ -81,13 +81,20 @@ class GameController:
         self.episode_rewards = deque(maxlen=100)
         self.moving_average_rewards = deque(maxlen=100)
 
+        self.reward_cooldowns = {
+            'self_hp_loss': 6,
+            'boss_hp_loss': 6,
+            'boss_posture_increase': 6,
+        }
+        self.reward_cooldown_counters = {key: 0 for key in self.reward_cooldowns}
+
     def action_judge(self, state_obj):
         """Judge the action and calculate the reward."""
         reward, defeated = 0, 0
         self.defeat_window_start = None
 
         # 1. Check for Boss Defeat
-        if state_obj.next_features['boss_hp'] <= 1:
+        if state_obj.next_features['boss_hp'] <= 0:
             defeat_reward, defeated = self.handle_boss_low_health(state_obj)
             reward += defeat_reward
         else:
@@ -124,39 +131,52 @@ class GameController:
         return reward, defeated
 
     def handle_boss_low_health(self, state_obj):
-        """Handle the scenario when the boss's health is low."""
-        if self.boss_lives == 1:
-            logger.info("Boss has a single life. Attempting to defeat immediately.")
+        boss_hp = state_obj.next_features.get('boss_hp', 0)
+        defeat_bonus = self.reward_weights.get('defeat_bonus', 40)
+
+        if self.boss_lives <= 1:
+            logger.info("Boss is in the final phase and try to defeat directly!")
             reward = self.attack_directly()
             self.defeated = 2
             return reward, self.defeated
         else:
             if not self.defeat_window_start:
                 self.defeat_window_start = time.time()
+                logger.info(f"Boss HP≤1，Now start the phase:{self.boss_lives}")
 
-            logger.info("Boss HP <= 1, initiating defeat protocol.")
+            if boss_hp > 80:
+                logger.info(f"Boss enter the next phase and the lives is:{self.boss_lives - 1}")
+                self.boss_lives -= 1
+                self.defeated = 0
+                self.defeat_window_start = None
+                self.intermediate_rewards_given = {
+                    '75%': False,
+                    '50%': False,
+                    '25%': False
+                }
+                self.missing_boss_hp_steps = 0
+                return defeat_bonus, self.defeated
 
-            # Ensure that the missing HP counter resets properly
-            if state_obj.next_features['boss_hp'] <= 0:
+            if boss_hp <= 0:
                 self.missing_boss_hp_steps += 1
             else:
                 self.missing_boss_hp_steps = 0
 
-            if self.missing_boss_hp_steps >= 16 or state_obj.next_features['boss_hp'] > 50:
-                defeat_bonus = self.reward_weights.get('defeat_bonus', 30)
+            if self.missing_boss_hp_steps > 50:
                 reward = defeat_bonus
                 self.boss_lives -= 1
                 self.defeated = 0
-                logger.info("Boss HP missing steps exceeded threshold; defeat confirmed.")
+                logger.info("Boss has lost the blood above the threshold and detected defeated")
+                self.missing_boss_hp_steps = 0
+                return reward, self.defeated
             else:
                 reward = self.attack_in_low_health_phase()
                 self.defeated = 0
-
-            return reward, self.defeated
+                return reward, self.defeated
 
     def attack_directly(self):
         """Attack the boss directly to defeat it."""
-        attack()  # Perform the attack using the imported function
+        attack()
         defeat_bonus = self.reward_weights.get('defeat_bonus')
         reward = defeat_bonus
         self.current_reward_types['defeat_bonus'] += defeat_bonus
@@ -168,7 +188,7 @@ class GameController:
         reward = 0
         time_elapsed = time.time() - self.defeat_window_start if self.defeat_window_start else 0
 
-        if time_elapsed > 6:  # Example: End attack after 6 seconds
+        if time_elapsed > 6:
             self.defeat_window_start = None
             logger.info("Defeat window expired, stopping attack.")
             return reward
@@ -184,25 +204,31 @@ class GameController:
         deltas = {key: state_obj.next_features[key] - state_obj.current_features[key] for key in keys}
         reward = 0
 
-        # 1. Self HP loss penalty
+        for key in self.reward_cooldown_counters:
+            if self.reward_cooldown_counters[key] > 0:
+                self.reward_cooldown_counters[key] -= 1
+
+        # 1. Self HP loss penalty with cooldown
         if -50 < deltas['self_hp'] < -10:
-            if not self.flags['self_hp_loss']:
+            if not self.flags['self_hp_loss'] and self.reward_cooldown_counters['self_hp_loss'] == 0:
                 self_hp_loss = self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
                 reward += self_hp_loss
                 self.current_reward_types['self_hp_loss'] += self_hp_loss
                 self.flags['self_hp_loss'] = True
+                self.reward_cooldown_counters['self_hp_loss'] = self.reward_cooldowns['self_hp_loss']
                 logger.info(f"Self HP reduced: {abs(deltas['self_hp'])} ; penalty applied: {self_hp_loss}")
         else:
             self.flags['self_hp_loss'] = False
 
-        # 2. Boss HP loss reward
+        # 2. Boss HP loss reward with cooldown
         if -6 < deltas['boss_hp'] < -3:
-            if not self.flags['boss_hp_loss']:
+            if not self.flags['boss_hp_loss'] and self.reward_cooldown_counters['boss_hp_loss'] == 0:
                 boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
                 reward += boss_hp_reward
                 self.current_reward_types['boss_hp_loss'] += boss_hp_reward
                 self.steps_since_last_attack = 0
                 self.flags['boss_hp_loss'] = True
+                self.reward_cooldown_counters['boss_hp_loss'] = self.reward_cooldowns['boss_hp_loss']
                 logger.info(f"Boss HP reduced: {abs(deltas['boss_hp'])} ; reward applied: {boss_hp_reward}")
         else:
             self.flags['boss_hp_loss'] = False
@@ -225,7 +251,7 @@ class GameController:
             self.intermediate_rewards_given['25%'] = True
             logger.info("Intermediate reward granted for boss HP below 25%.")
 
-        # 4. Self posture increase penalty
+        # 4. Self posture increase penalty with cooldown
         if 5 < deltas['self_posture'] < 15 and state_obj.current_features['self_posture'] > 80:
             if not self.flags['self_posture_increase']:
                 self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
@@ -237,13 +263,14 @@ class GameController:
         else:
             self.flags['self_posture_increase'] = False
 
-        # 5. Boss posture increase reward
+        # 5. Boss posture increase reward with cooldown
         if 3 < deltas['boss_posture'] < 10:
-            if not self.flags['boss_posture_increase']:
+            if not self.flags['boss_posture_increase'] and self.reward_cooldown_counters['boss_posture_increase'] == 0:
                 boss_posture_reward = self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
                 reward += boss_posture_reward
                 self.current_reward_types['boss_posture_increase'] += boss_posture_reward
                 self.flags['boss_posture_increase'] = True
+                self.reward_cooldown_counters['boss_posture_increase'] = self.reward_cooldowns.get('boss_posture_increase', 0)
                 logger.info(
                     f"Boss posture increased by {deltas['boss_posture']:.2f}; reward applied: {boss_posture_reward}")
         else:
@@ -354,7 +381,7 @@ class GameController:
 
                 if self.env.target_step % 60 == 0:
                     self.env.train_mark += 1
-                    if self.env.train_mark % 5 == 0:
+                    if self.env.train_mark % 3 == 0:
                         self.agent.train()
 
                 if self.defeated:
