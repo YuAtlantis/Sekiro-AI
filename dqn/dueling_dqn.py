@@ -215,7 +215,7 @@ class PrioritizedReplayBuffer:
             self.tree.update(idx, p)
 
     def __len__(self):
-        return self.tree.write if self.tree.write != 0 else self.capacity
+        return self.capacity if self.tree.write == 0 and self.tree.data[-1] is not None else self.tree.write
 
 
 class DQNAgent:
@@ -586,15 +586,15 @@ class DQNAgent:
         valid_replay_buffers = []
         for f in replay_buffers:
             try:
-                size_part = f.split('_')[3]  # '6185.pkl.gz'
-                size = int(size_part.split('.')[0])  # 提取 '6185' 并转换为 int
+                size_part = f.split('_')[3]
+                size = int(size_part.split('.')[0])
                 valid_replay_buffers.append((f, size))
             except (IndexError, ValueError):
                 print(f"Invalid replay buffer format: {f}")
 
         valid_replay_buffers.sort(key=lambda x: (x[1], os.path.getmtime(os.path.join(self.model_folder, x[0]))))
 
-        for rb_file, _ in valid_replay_buffers[:-5]:
+        for rb_file, _ in valid_replay_buffers[:-2]:
             rb_file_path = os.path.join(self.model_folder, rb_file)
             os.remove(rb_file_path)
             print(f"Deleted old replay buffer: {rb_file_path}")

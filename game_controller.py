@@ -50,11 +50,10 @@ class GameController:
             '25%': False
         }
         self.reward_weights = {
-            'self_hp_loss': -0.3,
-            'boss_hp_loss': 2.2,
+            'self_hp_loss': -0.2,
+            'boss_hp_loss': 2.4,
             'self_death': -15,
-            'self_posture_increase': -0.3,
-            'boss_posture_increase': 0.6,
+            'self_posture_increase': -0.2,
             'defeat_bonus': 40,
             'time_penalty': -0.005,
             "intermediate_defeat": 0,
@@ -65,7 +64,6 @@ class GameController:
             'self_hp_loss': [],
             'boss_hp_loss': [],
             'self_posture_increase': [],
-            'boss_posture_increase': [],
             'defeat_bonus': [],
             'self_death': [],
             'idle_penalty': [],
@@ -75,7 +73,6 @@ class GameController:
             'self_hp_loss': False,
             'boss_hp_loss': False,
             'self_posture_increase': False,
-            'boss_posture_increase': False,
         }
         self.current_reward_types = {key: 0 for key in self.reward_weights}
         self.episode_rewards = deque(maxlen=100)
@@ -193,7 +190,7 @@ class GameController:
 
     def calculate_deltas(self, state_obj):
         """Calculate the reward based on the changes in features."""
-        keys = ['self_hp', 'boss_hp', 'self_posture', 'boss_posture']
+        keys = ['self_hp', 'boss_hp', 'self_posture']
         deltas = {key: state_obj.next_features[key] - state_obj.current_features[key] for key in keys}
         reward = 0
 
@@ -249,18 +246,6 @@ class GameController:
                     f"Self posture increased by {deltas['self_posture']:.2f}; penalty applied: {self_posture_penalty:.2f}")
         else:
             self.flags['self_posture_increase'] = False
-
-        # 5. Boss posture increase reward with cooldown
-        if 3 < deltas['boss_posture'] < 10:
-            if not self.flags['boss_posture_increase']:
-                boss_posture_reward = self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
-                reward += boss_posture_reward
-                self.current_reward_types['boss_posture_increase'] += boss_posture_reward
-                self.flags['boss_posture_increase'] = True
-                logger.info(
-                    f"Boss posture increased by {deltas['boss_posture']:.2f}; reward applied: {boss_posture_reward:.2f}")
-        else:
-            self.flags['boss_posture_increase'] = False
 
         return reward
 
@@ -345,12 +330,11 @@ class GameController:
                 self_hp = features['self_hp']
                 boss_hp = features['boss_hp']
                 self_posture = features['self_posture']
-                boss_posture = features['boss_posture']
 
                 current_time = time.time()
                 if current_time - self.last_feature_log_time >= 1:
                     logger.info(f'Player Health: {self_hp:.2f}%, Boss Health: {boss_hp:.2f}%, '
-                                f'Player Posture: {self_posture:.2f}%, Boss Posture: {boss_posture:.2f}%')
+                                f'Player Posture: {self_posture:.2f}%')
                     self.last_feature_log_time = current_time
 
                 reward, self.defeated = self.action_judge(state_obj)
