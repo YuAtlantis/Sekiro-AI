@@ -4,8 +4,7 @@ import torch
 import torch.nn.functional as F
 import logging
 import threading
-import time
-from cv.health_posture import extract_health, extract_posture
+from cv.health_posture import extract_health, extract_posture, update_health, update_posture
 from cv.ocr_utils import get_remaining_uses
 from cv.screen_capture import grab_full_screen, grab_region
 
@@ -59,15 +58,19 @@ class GameEnvironment:
     @staticmethod
     def extract_features(screens):
         """Extract health and posture features from the captured screens."""
-        self_blood, boss_blood = extract_health(
+        new_player_health, new_boss_health = extract_health(
             screens['self_blood'], screens['boss_blood'])
-        self_posture, boss_posture = extract_posture(
+        new_player_posture, new_boss_posture = extract_posture(
             screens['self_posture'], screens['boss_posture'])
+
+        stable_player_health, stable_boss_health = update_health(new_player_health, new_boss_health)
+        stable_player_posture, stable_boss_posture = update_posture(new_player_posture, new_boss_posture)
+
         return {
-            'self_hp': self_blood,
-            'boss_hp': boss_blood,
-            'self_posture': self_posture,
-            'boss_posture': boss_posture
+            'self_hp': stable_player_health,
+            'boss_hp': stable_boss_health,
+            'self_posture': stable_player_posture,
+            'boss_posture': stable_boss_posture
         }
 
     def resize_screen(self, img):

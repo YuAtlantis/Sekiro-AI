@@ -81,13 +81,6 @@ class GameController:
         self.episode_rewards = deque(maxlen=100)
         self.moving_average_rewards = deque(maxlen=100)
 
-        self.reward_cooldowns = {
-            'self_hp_loss': 6,
-            'boss_hp_loss': 6,
-            'boss_posture_increase': 6,
-        }
-        self.reward_cooldown_counters = {key: 0 for key in self.reward_cooldowns}
-
     def action_judge(self, state_obj):
         """Judge the action and calculate the reward."""
         reward, defeated = 0, 0
@@ -204,32 +197,26 @@ class GameController:
         deltas = {key: state_obj.next_features[key] - state_obj.current_features[key] for key in keys}
         reward = 0
 
-        for key in self.reward_cooldown_counters:
-            if self.reward_cooldown_counters[key] > 0:
-                self.reward_cooldown_counters[key] -= 1
-
-        # 1. Self HP loss penalty with cooldown
+        # 1. Self HP loss penalty
         if -50 < deltas['self_hp'] < -10:
-            if not self.flags['self_hp_loss'] and self.reward_cooldown_counters['self_hp_loss'] == 0:
+            if not self.flags['self_hp_loss']:
                 self_hp_loss = self.reward_weights['self_hp_loss'] * abs(deltas['self_hp'])
                 reward += self_hp_loss
                 self.current_reward_types['self_hp_loss'] += self_hp_loss
                 self.flags['self_hp_loss'] = True
-                self.reward_cooldown_counters['self_hp_loss'] = self.reward_cooldowns['self_hp_loss']
-                logger.info(f"Self HP reduced: {abs(deltas['self_hp'])} ; penalty applied: {self_hp_loss}")
+                logger.info(f"Self HP reduced: {abs(deltas['self_hp']):.2f} ; penalty applied: {self_hp_loss:.2f}")
         else:
             self.flags['self_hp_loss'] = False
 
-        # 2. Boss HP loss reward with cooldown
+        # 2. Boss HP loss reward
         if -6 < deltas['boss_hp'] < -3:
-            if not self.flags['boss_hp_loss'] and self.reward_cooldown_counters['boss_hp_loss'] == 0:
+            if not self.flags['boss_hp_loss']:
                 boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
                 reward += boss_hp_reward
                 self.current_reward_types['boss_hp_loss'] += boss_hp_reward
                 self.steps_since_last_attack = 0
                 self.flags['boss_hp_loss'] = True
-                self.reward_cooldown_counters['boss_hp_loss'] = self.reward_cooldowns['boss_hp_loss']
-                logger.info(f"Boss HP reduced: {abs(deltas['boss_hp'])} ; reward applied: {boss_hp_reward}")
+                logger.info(f"Boss HP reduced: {abs(deltas['boss_hp']):.2f} ; reward applied: {boss_hp_reward:.2f}")
         else:
             self.flags['boss_hp_loss'] = False
 
@@ -251,7 +238,7 @@ class GameController:
             self.intermediate_rewards_given['25%'] = True
             logger.info("Intermediate reward granted for boss HP below 25%.")
 
-        # 4. Self posture increase penalty with cooldown
+        # 4. Self posture increase penalty
         if 5 < deltas['self_posture'] < 15 and state_obj.current_features['self_posture'] > 80:
             if not self.flags['self_posture_increase']:
                 self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
@@ -259,20 +246,19 @@ class GameController:
                 self.current_reward_types['self_posture_increase'] += self_posture_penalty
                 self.flags['self_posture_increase'] = True
                 logger.info(
-                    f"Self posture increased by {deltas['self_posture']:.2f}; penalty applied: {self_posture_penalty}")
+                    f"Self posture increased by {deltas['self_posture']:.2f}; penalty applied: {self_posture_penalty:.2f}")
         else:
             self.flags['self_posture_increase'] = False
 
         # 5. Boss posture increase reward with cooldown
         if 3 < deltas['boss_posture'] < 10:
-            if not self.flags['boss_posture_increase'] and self.reward_cooldown_counters['boss_posture_increase'] == 0:
+            if not self.flags['boss_posture_increase']:
                 boss_posture_reward = self.reward_weights['boss_posture_increase'] * deltas['boss_posture']
                 reward += boss_posture_reward
                 self.current_reward_types['boss_posture_increase'] += boss_posture_reward
                 self.flags['boss_posture_increase'] = True
-                self.reward_cooldown_counters['boss_posture_increase'] = self.reward_cooldowns.get('boss_posture_increase', 0)
                 logger.info(
-                    f"Boss posture increased by {deltas['boss_posture']:.2f}; reward applied: {boss_posture_reward}")
+                    f"Boss posture increased by {deltas['boss_posture']:.2f}; reward applied: {boss_posture_reward:.2f}")
         else:
             self.flags['boss_posture_increase'] = False
 

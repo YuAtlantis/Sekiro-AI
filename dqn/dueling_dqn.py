@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 
 # Experience replay buffer size
-REPLAY_SIZE = 10000
+REPLAY_SIZE = 9000
 # Minibatch size
 SMALL_BATCH_SIZE = 64
 BIG_BATCH_SIZE = 128
@@ -326,14 +326,15 @@ class DQNAgent:
 
         if len(self.replay_buffer) < buffer_size:
             print(f"Current Replay Buffer Size: {len(self.replay_buffer)} and global step: {self.global_step}")
-            if self.global_step % 5 == 0:
-                replay_buffer_size = len(self.replay_buffer)
-                replay_buffer_path = os.path.join(
-                    self.model_folder,
-                    f"replay_buffer_size_{replay_buffer_size}.pkl.gz"
-                )
-                self.save_replay_buffer_async(replay_buffer_path)
             return
+
+        if self.global_step % 5 == 0:
+            replay_buffer_size = len(self.replay_buffer)
+            replay_buffer_path = os.path.join(
+                self.model_folder,
+                f"replay_buffer_size_{replay_buffer_size}.pkl.gz"
+            )
+            self.save_replay_buffer_async(replay_buffer_path)
 
         print(f"Start Training Under Buffer Size: {len(self.replay_buffer)}")
         # Update Beta value for prioritized experience replay
@@ -568,31 +569,35 @@ class DQNAgent:
         }, best_model_path)
         print(f"Best model saved with reward {self.best_reward} at {best_model_path}")
 
-    def manage_old_checkpoints(self, max_checkpoints=12):
-        # Get list of checkpoint files
+    def manage_old_checkpoints(self, max_checkpoints=8):
         checkpoints = [f for f in os.listdir(self.model_folder) if
                        f.startswith("checkpoint_step_") and f.endswith('.pth')]
+
         if len(checkpoints) > max_checkpoints:
-            # Sort checkpoints by modification time
             checkpoints.sort(key=lambda x: os.path.getmtime(os.path.join(self.model_folder, x)))
             for checkpoint in checkpoints[:-max_checkpoints]:
                 checkpoint_path = os.path.join(self.model_folder, checkpoint)
                 os.remove(checkpoint_path)
                 print(f"Deleted old checkpoint: {checkpoint_path}")
 
-        # Get list of replay buffer files
         replay_buffers = [f for f in os.listdir(self.model_folder) if
                           f.startswith("replay_buffer_size_") and f.endswith('.pkl.gz')]
-        if len(replay_buffers) > 5:
-            # Sort replay buffers by size and modification time
-            replay_buffers.sort(key=lambda x: (
-                int(x.split('_')[3]),  # Extract size
-                os.path.getmtime(os.path.join(self.model_folder, x))
-            ))
-            for rb_file in replay_buffers[:-max_checkpoints]:
-                rb_file_path = os.path.join(self.model_folder, rb_file)
-                os.remove(rb_file_path)
-                print(f"Deleted old replay buffer: {rb_file_path}")
+
+        valid_replay_buffers = []
+        for f in replay_buffers:
+            try:
+                size_part = f.split('_')[3]  # '6185.pkl.gz'
+                size = int(size_part.split('.')[0])  # 提取 '6185' 并转换为 int
+                valid_replay_buffers.append((f, size))
+            except (IndexError, ValueError):
+                print(f"Invalid replay buffer format: {f}")
+
+        valid_replay_buffers.sort(key=lambda x: (x[1], os.path.getmtime(os.path.join(self.model_folder, x[0]))))
+
+        for rb_file, _ in valid_replay_buffers[:-5]:
+            rb_file_path = os.path.join(self.model_folder, rb_file)
+            os.remove(rb_file_path)
+            print(f"Deleted old replay buffer: {rb_file_path}")
 
     def load_replay_buffer(self, path):
         """Load the replay buffer from a compressed file."""
