@@ -448,11 +448,11 @@ class DQNAgent:
         """Continuous training loop running in a separate thread."""
         while not self.training_stop_event.is_set():
             buffer_length = len(self.replay_buffer)
-            if buffer_length >= 3000:
+            if buffer_length >= 5000:
                 print(f"Starting training step with buffer size: {buffer_length}")
                 self.train_step()
                 print(f"Completed training step. Current step: {self.global_step}")
-                time.sleep(30)
+                time.sleep(60)
             else:
                 print(f"Current buffer size is: {buffer_length}")
                 time.sleep(5)

@@ -220,28 +220,27 @@ def update_health(new_player_health, new_boss_health):
         current_health['player'] = new_player_health
         logging.info(f"Initialized player health: {new_player_health:.2f}")
     else:
-        if current_health['player'] <= 1.0 and new_player_health > 0.0:
-            # Immediate update from 0 to non-zero
-            logging.info(f"Player health immediately updated from 0.0 to {new_player_health:.2f}")
-            current_health['player'] = new_player_health
-            health_update_buffer['player'].clear()
-        elif new_player_health <= 1.0 and current_health['player'] != 0.0:
-            # Immediate update to 0
-            logging.info(f"Player health immediately updated to 0.0")
-            current_health['player'] = 0.0
-            health_update_buffer['player'].clear()
+        if new_player_health > 50.0:
+            logging.warning(f"Detected player health {new_player_health:.2f}% exceeds 50%. Update ignored.")
         else:
-            # Check if health has changed beyond the threshold
-            if abs(new_player_health - current_health['player']) > CHANGE_THRESHOLD:
-                health_update_buffer['player'].append(1)
-            else:
-                health_update_buffer['player'].append(0)
-
-            # If change detected over required consecutive frames, update health
-            if sum(health_update_buffer['player']) >= REQUIRED_CONSECUTIVE_FRAMES:
-                logging.info(f"Player health updated: {current_health['player']:.2f} -> {new_player_health:.2f}")
+            if current_health['player'] <= 1.0 and new_player_health > 0.0:
+                logging.info(f"Player health immediately updated from 0.0% to {new_player_health:.2f}%")
                 current_health['player'] = new_player_health
                 health_update_buffer['player'].clear()
+            elif new_player_health <= 1.0 and current_health['player'] != 0.0:
+                logging.info(f"Player health immediately updated to 0.0%")
+                current_health['player'] = 0.0
+                health_update_buffer['player'].clear()
+            else:
+                if abs(new_player_health - current_health['player']) > CHANGE_THRESHOLD:
+                    health_update_buffer['player'].append(1)
+                else:
+                    health_update_buffer['player'].append(0)
+
+                if sum(health_update_buffer['player']) >= REQUIRED_CONSECUTIVE_FRAMES:
+                    logging.info(f"Player health updated: {current_health['player']:.2f}% -> {new_player_health:.2f}%")
+                    current_health['player'] = new_player_health
+                    health_update_buffer['player'].clear()
 
     # Update Boss Health
     if current_health['boss'] is None:
@@ -250,10 +249,15 @@ def update_health(new_player_health, new_boss_health):
     else:
         if not is_valid_update(current_health['boss'], new_boss_health, 20):
             current_health['boss'] = current_health['boss']
-        if current_health['boss'] == 0.0 and new_boss_health > 0.0:
+        if current_health['boss'] <= 1.0 and new_boss_health > 0.0:
             # Immediate update from 0 to non-zero
             logging.info(f"Boss health immediately updated from 0.0 to {new_boss_health:.2f}")
             current_health['boss'] = new_boss_health
+            health_update_buffer['boss'].clear()
+        elif new_boss_health <= 1.0 and current_health['boss'] != 0.0:
+            # Immediate update to 0
+            logging.info(f"Boss health immediately updated to 0.0")
+            current_health['boss'] = 0.0
             health_update_buffer['boss'].clear()
         else:
             # Check if health has changed beyond the threshold

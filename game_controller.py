@@ -27,7 +27,7 @@ class GameController:
     def __init__(self):
         self.last_feature_log_time = 0
         self.last_time_penalty_update = time.time()
-        self.time_penalty_increment = -0.001
+        self.time_penalty_increment = -0.0005
 
         self.last_actions = deque(maxlen=12)
 
@@ -55,7 +55,7 @@ class GameController:
             'self_death': -10,
             'self_posture_increase': -0.5,
             'defeat_bonus': 20,
-            'time_penalty': -0.01,
+            'time_penalty': -0.001,
             "intermediate_defeat": 0,
             'idle_penalty': -2
         }
@@ -92,13 +92,14 @@ class GameController:
             delta_reward = self.calculate_deltas(state_obj)
             reward += delta_reward
 
-        current_time = time.time()
-        if current_time - self.last_time_penalty_update >= 1:
-            # 3. Apply Time Penalty
-            time_penalty = self.reward_weights['time_penalty'] + (self.env.target_step * self.time_penalty_increment)
-            reward += time_penalty
-            self.current_reward_types['time_penalty'] += time_penalty
-            self.last_time_penalty_update = current_time
+        if not self.env.manual:
+            current_time = time.time()
+            if current_time - self.last_time_penalty_update >= 1:
+                # 3. Apply Time Penalty
+                time_penalty = self.reward_weights['time_penalty'] + (self.env.target_step * self.time_penalty_increment)
+                reward += time_penalty
+                self.current_reward_types['time_penalty'] += time_penalty
+                self.last_time_penalty_update = current_time
 
         # 4. Apply Idle Penalty
         if not self.env.manual:
@@ -302,13 +303,14 @@ class GameController:
             state_obj = GameState(features, state)
 
             while True:
-                self.env.target_step += 1
                 self.env.paused = pause_game(self.env.paused)
 
                 action_mask = self.env.get_action_mask()
 
                 if self.env.manual:
                     action = self.get_manual_action()
+                    if action is None:
+                        continue
                 else:
                     action = self.agent.choose_action(state_obj.current_state, action_mask)
 
@@ -349,6 +351,7 @@ class GameController:
                     self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,
                                                 self.defeated)
 
+                self.env.target_step += 1
                 if self.defeated:
                     break
 
