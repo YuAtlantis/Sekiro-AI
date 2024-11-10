@@ -38,8 +38,8 @@ def restart(env, defeated):
         pause_game(True)
 
     def restart_sequence():
-        print("-------------------------Waiting for 8 seconds to restart the game-------------------------")
-        time.sleep(8.5)
+        print("-------------------------Waiting for 5 seconds to restart the game-------------------------")
+        time.sleep(4.5)
         focus_game_window()
         input_keys.lock_vision()
         time.sleep(0.5)

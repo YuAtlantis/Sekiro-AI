@@ -3,6 +3,7 @@ import os
 import pickle
 import random
 import torch
+import time
 import threading
 import numpy as np
 import torch.optim.lr_scheduler as lr_scheduler
@@ -10,12 +11,12 @@ import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.init as init
-from threading import Lock
+from threading import Lock, Event
 from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 
 # Experience replay buffer size
-REPLAY_SIZE = 9000
+REPLAY_SIZE = 10000
 # Minibatch size
 SMALL_BATCH_SIZE = 64
 BIG_BATCH_SIZE = 128
@@ -177,14 +178,27 @@ class PrioritizedReplayBuffer:
         self.max_priority = 1.0
         self.min_priority = 1.0
         self.size = 0
+        self.lock = Lock()
+        print("PrioritizedReplayBuffer initialized with lock.")
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if 'lock' in state:
+            del state['lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.lock = Lock()
 
     def add(self, error, sample):
         p = (error + 1e-5) ** self.alpha
-        self.max_priority = max(self.max_priority, p)
-        self.min_priority = min(self.min_priority, p)
-        self.tree.add(p, sample)
-        if self.size < self.capacity:
-            self.size += 1
+        with self.lock:
+            self.max_priority = max(self.max_priority, p)
+            self.min_priority = min(self.min_priority, p)
+            self.tree.add(p, sample)
+            if self.size < self.capacity:
+                self.size += 1
 
     def sample(self, batch_size, beta):
         batch = []
@@ -212,11 +226,12 @@ class PrioritizedReplayBuffer:
         if len(idxs) != len(errors):
             raise ValueError("idxs and errors must have the same length")
 
-        for idx, error in zip(idxs, errors):
-            p = (error + 1e-5) ** self.alpha
-            self.max_priority = max(self.max_priority, p)
-            self.min_priority = min(self.min_priority, p)
-            self.tree.update(idx, p)
+        with self.lock:
+            for idx, error in zip(idxs, errors):
+                p = (error + 1e-5) ** self.alpha
+                self.max_priority = max(self.max_priority, p)
+                self.min_priority = min(self.min_priority, p)
+                self.tree.update(idx, p)
 
     def __len__(self):
         return self.size
@@ -248,11 +263,18 @@ class DQNAgent:
         # Added: Initialize best reward
         self.best_reward = -float('inf')
 
+        # Training thread control
+        self.training_thread = None
+        self.training_stop_event = Event()
+
         # Load checkpoint or replay_buffer
         self.load_largest_replay_buffer()
         self.load_checkpoint_or_model()
 
         self.writer = SummaryWriter(log_dir='./logs')
+
+        # Start training thread
+        self.start_training_thread()
 
     def initialize_networks(self):
         """Initialize networks with random weights."""
@@ -327,27 +349,13 @@ class DQNAgent:
         current_lr = self.optimizer.param_groups[0]['lr']
         self.writer.add_scalar('Learning Rate', current_lr, self.global_step)
 
-    def train(self, batch_size, buffer_size):
-        self.global_step += 1
-
-        if len(self.replay_buffer) < buffer_size:
-            print(f"Current Replay Buffer Size: {len(self.replay_buffer)} and global step: {self.global_step}")
-            return
-
-        if self.global_step % 5 == 0:
-            replay_buffer_size = len(self.replay_buffer)
-            replay_buffer_path = os.path.join(
-                self.model_folder,
-                f"replay_buffer_size_{replay_buffer_size}.pkl.gz"
-            )
-            self.save_replay_buffer_async(replay_buffer_path)
-
-        print(f"Start Training Under Buffer Size: {len(self.replay_buffer)}")
+    def train_step(self):
+        """Perform a single training step."""
         # Update Beta value for prioritized experience replay
         self.beta = min(1.0, self.beta + (1.0 - BETA_START) / BETA_FRAMES)
 
         # Sample from replay buffer
-        samples, idxs, is_weights = self.replay_buffer.sample(batch_size, self.beta)
+        samples, idxs, is_weights = self.replay_buffer.sample(BIG_BATCH_SIZE, self.beta)
         batch = list(zip(*samples))
         state_batch = torch.stack(batch[0]).to(device, non_blocking=True)
         action_batch = torch.tensor(batch[1], dtype=torch.long, device=device).unsqueeze(1)
@@ -427,6 +435,40 @@ class DQNAgent:
 
         # Periodically save model checkpoints
         self.save_checkpoint()
+
+        # Increment global_step
+        self.global_step += 1
+
+        # Save replay buffer every 10 steps
+        if self.global_step % 5 == 0:
+            replay_buffer_path = os.path.join(self.model_folder, f"replay_buffer_size_{len(self.replay_buffer)}.pkl.gz")
+            self.save_replay_buffer_async(replay_buffer_path)
+
+    def training_loop(self):
+        """Continuous training loop running in a separate thread."""
+        while not self.training_stop_event.is_set():
+            buffer_length = len(self.replay_buffer)
+            if buffer_length >= 3000:
+                print(f"Starting training step with buffer size: {buffer_length}")
+                self.train_step()
+                print(f"Completed training step. Current step: {self.global_step}")
+                time.sleep(30)
+            else:
+                print(f"Current buffer size is: {buffer_length}")
+                time.sleep(5)
+
+    def start_training_thread(self):
+        """Start the training thread."""
+        self.training_thread = threading.Thread(target=self.training_loop, daemon=True)
+        self.training_thread.start()
+        print("Training thread started.")
+
+    def stop_training_thread(self):
+        """Stop the training thread."""
+        self.training_stop_event.set()
+        if self.training_thread is not None:
+            self.training_thread.join()
+            print("Training thread stopped.")
 
     def check_and_save_best_model(self, reward_sum):
         """

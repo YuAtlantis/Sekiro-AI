@@ -34,7 +34,7 @@ class GameController:
         self.defeated = 0
 
         self.missing_boss_hp_steps = 0
-        self.boss_lives = 2
+        self.boss_lives = 1
 
         self.steps_since_last_attack = 0
         self.idle_threshold = 10
@@ -50,7 +50,7 @@ class GameController:
             '25%': False
         }
         self.reward_weights = {
-            'self_hp_loss': -1.0,
+            'self_hp_loss': -0.5,
             'boss_hp_loss': 5.0,
             'self_death': -10,
             'self_posture_increase': -0.5,
@@ -348,11 +348,6 @@ class GameController:
                 if action is not None:
                     self.agent.store_transition(state_obj.current_state, action, reward, state_obj.next_state,
                                                 self.defeated)
-
-                if self.env.target_step % 60 == 0:
-                    self.env.train_mark += 1
-                    if self.env.train_mark % 3 == 0:
-                        self.agent.train()
 
                 if self.defeated:
                     break

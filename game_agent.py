@@ -29,12 +29,6 @@ class GameAgent:
         """Store a transition in the replay buffer."""
         self.dqn_agent.store_transition(*args)
 
-    def train(self, batch_size=None, buffer_size=5000):
-        """Train the DQN agent."""
-        if batch_size is None:
-            batch_size = self.TRAIN_BATCH_SIZE
-        self.dqn_agent.train(batch_size, buffer_size)
-
     def update_target_network(self):
         """Update the target network."""
         self.dqn_agent.update_target_network()
