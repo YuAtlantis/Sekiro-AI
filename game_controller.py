@@ -50,14 +50,14 @@ class GameController:
             '25%': False
         }
         self.reward_weights = {
-            'self_hp_loss': -0.2,
-            'boss_hp_loss': 2.4,
-            'self_death': -15,
-            'self_posture_increase': -0.2,
-            'defeat_bonus': 40,
-            'time_penalty': -0.005,
+            'self_hp_loss': -1.0,
+            'boss_hp_loss': 5.0,
+            'self_death': -10,
+            'self_posture_increase': -0.5,
+            'defeat_bonus': 20,
+            'time_penalty': -0.01,
             "intermediate_defeat": 0,
-            'idle_penalty': -5
+            'idle_penalty': -2
         }
 
         self.reward_type_distribution = {

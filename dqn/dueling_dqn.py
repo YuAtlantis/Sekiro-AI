@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.init as init
+from threading import Lock
 from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 
@@ -175,12 +176,15 @@ class PrioritizedReplayBuffer:
 
         self.max_priority = 1.0
         self.min_priority = 1.0
+        self.size = 0
 
     def add(self, error, sample):
         p = (error + 1e-5) ** self.alpha
         self.max_priority = max(self.max_priority, p)
         self.min_priority = min(self.min_priority, p)
         self.tree.add(p, sample)
+        if self.size < self.capacity:
+            self.size += 1
 
     def sample(self, batch_size, beta):
         batch = []
@@ -215,7 +219,7 @@ class PrioritizedReplayBuffer:
             self.tree.update(idx, p)
 
     def __len__(self):
-        return self.capacity if self.tree.write == 0 and self.tree.data[-1] is not None else self.tree.write
+        return self.size
 
 
 class DQNAgent:
@@ -238,6 +242,8 @@ class DQNAgent:
         self.model_folder = model_folder
         self.model_file = model_file
         self.scaler = GradScaler()
+
+        self.save_lock = Lock()
 
         # Added: Initialize best reward
         self.best_reward = -float('inf')
@@ -433,9 +439,17 @@ class DQNAgent:
 
     def save_replay_buffer(self, path):
         """Save the replay buffer to a compressed file."""
-        with gzip.open(path, 'wb') as f:
-            pickle.dump(self.replay_buffer, f)
-        print(f"Replay buffer saved to {path}")
+        temp_path = f"{path}.tmp"
+        with self.save_lock:
+            try:
+                with gzip.open(temp_path, 'wb') as f:
+                    pickle.dump(self.replay_buffer, f)
+                os.replace(temp_path, path)
+                print(f"Replay buffer saved to {path}")
+            except Exception as e:
+                print(f"Failed to save replay buffer to {path}: {e}")
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
     def save_replay_buffer_async(self, path):
         """Asynchronously save the replay buffer."""

@@ -13,7 +13,7 @@ DEBUG_MODE = False  # Set to True to enable debugging visuals
 HEALTH_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 POSTURE_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
 
-REQUIRED_CONSECUTIVE_FRAMES = 13
+REQUIRED_CONSECUTIVE_FRAMES = 14
 CHANGE_THRESHOLD = 1.0
 
 # Initialize buffers with deque to maintain a fixed length
@@ -22,7 +22,7 @@ health_update_buffer = {
     'boss': deque(maxlen=REQUIRED_CONSECUTIVE_FRAMES)
 }
 current_health = {
-    'player': None,  # Set to None to indicate uninitialized
+    'player': None,
     'boss': None
 }
 
@@ -31,7 +31,7 @@ posture_update_buffer = {
     'boss': deque(maxlen=REQUIRED_CONSECUTIVE_FRAMES)
 }
 current_posture = {
-    'player': None,  # Set to None to indicate uninitialized
+    'player': None,
     'boss': None
 }
 
@@ -220,12 +220,12 @@ def update_health(new_player_health, new_boss_health):
         current_health['player'] = new_player_health
         logging.info(f"Initialized player health: {new_player_health:.2f}")
     else:
-        if current_health['player'] == 0.0 and new_player_health > 0.0:
+        if current_health['player'] <= 1.0 and new_player_health > 0.0:
             # Immediate update from 0 to non-zero
             logging.info(f"Player health immediately updated from 0.0 to {new_player_health:.2f}")
             current_health['player'] = new_player_health
             health_update_buffer['player'].clear()
-        elif new_player_health < 1.0 and current_health['player'] != 0.0:
+        elif new_player_health <= 1.0 and current_health['player'] != 0.0:
             # Immediate update to 0
             logging.info(f"Player health immediately updated to 0.0")
             current_health['player'] = 0.0
@@ -317,13 +317,11 @@ def update_posture(new_player_posture, new_boss_posture):
     # Update Boss Posture
     if current_posture['boss'] is None:
         current_posture['boss'] = new_boss_posture
-        logging.info(f"Initialized boss posture: {new_boss_posture:.2f}")
     else:
         if not is_valid_update(current_posture['boss'], new_boss_posture, 20):
             current_posture['boss'] = current_posture['boss']
         if current_posture['boss'] == 0.0 and new_boss_posture > 0.0:
             # Immediate update from 0 to non-zero
-            logging.info(f"Boss posture immediately updated from 0.0 to {new_boss_posture:.2f}")
             current_posture['boss'] = new_boss_posture
             posture_update_buffer['boss'].clear()
         else:
@@ -335,7 +333,6 @@ def update_posture(new_player_posture, new_boss_posture):
 
             # If change detected over required consecutive frames, update posture
             if sum(posture_update_buffer['boss']) >= REQUIRED_CONSECUTIVE_FRAMES:
-                logging.info(f"Boss posture updated: {current_posture['boss']:.2f} -> {new_boss_posture:.2f}")
                 current_posture['boss'] = new_boss_posture
                 posture_update_buffer['boss'].clear()
 
