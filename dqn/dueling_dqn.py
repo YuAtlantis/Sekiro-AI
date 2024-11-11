@@ -16,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 
 # Experience replay buffer size
-REPLAY_SIZE = 10000
+REPLAY_SIZE = 8800
 # Minibatch size
 SMALL_BATCH_SIZE = 64
 BIG_BATCH_SIZE = 128
@@ -28,7 +28,7 @@ INITIAL_EPSILON = 1.0
 FINAL_EPSILON = 0.01
 EPSILON_DECAY = 50000
 LR = 0.0001
-ALPHA = 0.4
+ALPHA = 0.5
 BETA_START = 0.4
 BETA_FRAMES = 200000
 
@@ -43,11 +43,13 @@ class DuelingDQN(nn.Module):
 
         # Define the Convolutional Neural Network (CNN)
         self.conv_layers = nn.Sequential(
-            nn.Conv2d(input_channels, 32, kernel_size=8, stride=4),  # Output size: (W - 8)/4 + 1
+            nn.Conv2d(input_channels, 32, kernel_size=8, stride=4),
             nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),  # Output size: (W - 4)/2 + 1
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),  # Output size: (W - 3)/1 + 1
+            nn.Conv2d(64, 128, kernel_size=3, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1),
             nn.ReLU()
         )
 
@@ -77,25 +79,16 @@ class DuelingDQN(nn.Module):
         self.value_stream = nn.Sequential(
             nn.Linear(self.seq_length * self.embed_dim, 256),
             nn.ReLU(),
+            nn.Dropout(p=0.3),
             nn.Linear(256, 1)
         )
 
         self.advantage_stream = nn.Sequential(
             nn.Linear(self.seq_length * self.embed_dim, 256),
             nn.ReLU(),
+            nn.Dropout(p=0.3),
             nn.Linear(256, action_space)
         )
-
-        # Initialize weights
-        self.apply(self._init_weights)
-
-    @staticmethod
-    def _init_weights(m):
-        """Custom weight initialization using Xavier initialization method."""
-        if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
-            nn.init.xavier_uniform_(m.weight)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x = self.conv_layers(x)  # Output shape: [batch_size, channels, H, W]
@@ -448,7 +441,7 @@ class DQNAgent:
         """Continuous training loop running in a separate thread."""
         while not self.training_stop_event.is_set():
             buffer_length = len(self.replay_buffer)
-            if buffer_length >= 5000:
+            if buffer_length >= 4000:
                 print(f"Starting training step with buffer size: {buffer_length}")
                 self.train_step()
                 print(f"Completed training step. Current step: {self.global_step}")

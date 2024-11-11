@@ -27,14 +27,14 @@ class GameController:
     def __init__(self):
         self.last_feature_log_time = 0
         self.last_time_penalty_update = time.time()
-        self.time_penalty_increment = -0.0005
+        self.time_penalty_increment = -0.001
 
         self.last_actions = deque(maxlen=12)
 
         self.defeated = 0
 
         self.missing_boss_hp_steps = 0
-        self.boss_lives = 1
+        self.boss_lives = 2
 
         self.steps_since_last_attack = 0
         self.idle_threshold = 10
@@ -50,11 +50,11 @@ class GameController:
             '25%': False
         }
         self.reward_weights = {
-            'self_hp_loss': -0.5,
-            'boss_hp_loss': 5.0,
-            'self_death': -10,
-            'self_posture_increase': -0.5,
-            'defeat_bonus': 20,
+            'self_hp_loss': -1.0,
+            'boss_hp_loss': 7.0,
+            'self_death': -50,
+            'self_posture_increase': -1.0,
+            'defeat_bonus': 35,
             'time_penalty': -0.001,
             "intermediate_defeat": 0,
             'idle_penalty': -2
@@ -133,20 +133,7 @@ class GameController:
         else:
             if not self.defeat_window_start:
                 self.defeat_window_start = time.time()
-                logger.info(f"Boss HP≤1，Now start the phase:{self.boss_lives}")
-
-            if boss_hp > 80:
-                logger.info(f"Boss enter the next phase and the lives is:{self.boss_lives - 1}")
-                self.boss_lives -= 1
-                self.defeated = 0
-                self.defeat_window_start = None
-                self.intermediate_rewards_given = {
-                    '75%': False,
-                    '50%': False,
-                    '25%': False
-                }
-                self.missing_boss_hp_steps = 0
-                return defeat_bonus, self.defeated
+                logger.info(f"Boss HP ≤ 1, starting phase: {self.boss_lives}")
 
             if boss_hp <= 0:
                 self.missing_boss_hp_steps += 1
@@ -157,12 +144,12 @@ class GameController:
                 reward = defeat_bonus
                 self.boss_lives -= 1
                 self.defeated = 0
-                logger.info("Boss has lost the blood above the threshold and detected defeated")
+                logger.info("Boss defeated in this phase.")
                 self.missing_boss_hp_steps = 0
                 return reward, self.defeated
             else:
-                reward = self.attack_in_low_health_phase()
-                self.defeated = 0
+                reward, defeated = self.attack_in_low_health_phase(state_obj)
+                self.defeated = defeated
                 return reward, self.defeated
 
     def attack_directly(self):
@@ -174,20 +161,36 @@ class GameController:
         logger.info("Boss defeated directly; defeat bonus awarded.")
         return reward
 
-    def attack_in_low_health_phase(self):
-        """Attack during the boss's low health phase."""
+    def attack_in_low_health_phase(self, state_obj):
+        """Attack during the boss's low health phase and send rewards when Boss enters the next phase."""
+        boss_hp = state_obj.next_features.get('boss_hp', 0)
+        defeat_bonus = self.reward_weights.get('defeat_bonus', 20)
         reward = 0
         time_elapsed = time.time() - self.defeat_window_start if self.defeat_window_start else 0
 
         if time_elapsed > 6:
             self.defeat_window_start = None
             logger.info("Defeat window expired, stopping attack.")
-            return reward
+            return reward, self.defeated
 
         attack()
         logger.info("Continuing to attack Boss to ensure defeat...")
 
-        return reward
+        if boss_hp > 50:
+            logger.info(f"Boss entered the next phase, remaining lives: {self.boss_lives - 1}")
+            reward = defeat_bonus
+            self.boss_lives -= 1
+            self.defeated = 0
+            self.defeat_window_start = None
+            self.intermediate_rewards_given = {
+                '75%': False,
+                '50%': False,
+                '25%': False
+            }
+            self.missing_boss_hp_steps = 0
+            return reward, self.defeated
+
+        return reward, self.defeated
 
     def calculate_deltas(self, state_obj):
         """Calculate the reward based on the changes in features."""
@@ -207,7 +210,7 @@ class GameController:
             self.flags['self_hp_loss'] = False
 
         # 2. Boss HP loss reward
-        if -6 < deltas['boss_hp'] < -3:
+        if -6 < deltas['boss_hp'] < -1:
             if not self.flags['boss_hp_loss']:
                 boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
                 reward += boss_hp_reward
@@ -220,19 +223,19 @@ class GameController:
 
         # 3. Intermediate rewards based on boss HP thresholds
         boss_hp_percentage = state_obj.next_features['boss_hp']
-        if 0.75 > boss_hp_percentage >= 0.5 and not self.intermediate_rewards_given['75%']:
-            reward += 10
+        if 75 > boss_hp_percentage >= 50 and not self.intermediate_rewards_given['75%']:
+            reward += 15
             self.current_reward_types['intermediate_defeat'] += 10
             self.intermediate_rewards_given['75%'] = True
             logger.info("Intermediate reward granted for boss HP between 50% and 75%.")
-        elif 0.5 > boss_hp_percentage >= 0.25 and not self.intermediate_rewards_given['50%']:
-            reward += 20
+        elif 50 > boss_hp_percentage >= 25 and not self.intermediate_rewards_given['50%']:
+            reward += 25
             self.current_reward_types['intermediate_defeat'] += 20
             self.intermediate_rewards_given['50%'] = True
             logger.info("Intermediate reward granted for boss HP between 25% and 50%.")
-        elif boss_hp_percentage < 0.25 and not self.intermediate_rewards_given['25%']:
-            reward += 20
-            self.current_reward_types['intermediate_defeat'] += 20
+        elif boss_hp_percentage < 25 and not self.intermediate_rewards_given['25%']:
+            reward += 35
+            self.current_reward_types['intermediate_defeat'] += 30
             self.intermediate_rewards_given['25%'] = True
             logger.info("Intermediate reward granted for boss HP below 25%.")
 
@@ -271,12 +274,6 @@ class GameController:
         self.agent.log_episode_reward(episode + 1, total_reward, moving_average)
 
         self.current_reward_types = {key: 0 for key in self.reward_weights}
-
-        self.intermediate_rewards_given = {
-            '75%': False,
-            '50%': False,
-            '25%': False
-        }
 
         self.steps_since_last_attack = 0
 
