@@ -50,12 +50,11 @@ class GameController:
             '25%': False
         }
         self.reward_weights = {
-            'self_hp_loss': -1.0,
-            'boss_hp_loss': 7.0,
-            'self_death': -50,
-            'self_posture_increase': -1.0,
+            'self_hp_loss': -0.7,
+            'boss_hp_loss': 10.0,
+            'self_death': -15,
             'defeat_bonus': 35,
-            'time_penalty': -0.001,
+            'time_penalty': -0.0008,
             "intermediate_defeat": 0,
             'idle_penalty': -2
         }
@@ -63,7 +62,6 @@ class GameController:
         self.reward_type_distribution = {
             'self_hp_loss': [],
             'boss_hp_loss': [],
-            'self_posture_increase': [],
             'defeat_bonus': [],
             'self_death': [],
             'idle_penalty': [],
@@ -72,7 +70,6 @@ class GameController:
         self.flags = {
             'self_hp_loss': False,
             'boss_hp_loss': False,
-            'self_posture_increase': False,
         }
         self.current_reward_types = {key: 0 for key in self.reward_weights}
         self.episode_rewards = deque(maxlen=100)
@@ -194,7 +191,7 @@ class GameController:
 
     def calculate_deltas(self, state_obj):
         """Calculate the reward based on the changes in features."""
-        keys = ['self_hp', 'boss_hp', 'self_posture']
+        keys = ['self_hp', 'boss_hp']
         deltas = {key: state_obj.next_features[key] - state_obj.current_features[key] for key in keys}
         reward = 0
 
@@ -210,7 +207,7 @@ class GameController:
             self.flags['self_hp_loss'] = False
 
         # 2. Boss HP loss reward
-        if -6 < deltas['boss_hp'] < -1:
+        if -12 < deltas['boss_hp'] < -1:
             if not self.flags['boss_hp_loss']:
                 boss_hp_reward = self.reward_weights['boss_hp_loss'] * abs(deltas['boss_hp'])
                 reward += boss_hp_reward
@@ -238,18 +235,6 @@ class GameController:
             self.current_reward_types['intermediate_defeat'] += 30
             self.intermediate_rewards_given['25%'] = True
             logger.info("Intermediate reward granted for boss HP below 25%.")
-
-        # 4. Self posture increase penalty
-        if 5 < deltas['self_posture'] < 15 and state_obj.current_features['self_posture'] > 80:
-            if not self.flags['self_posture_increase']:
-                self_posture_penalty = self.reward_weights['self_posture_increase'] * deltas['self_posture']
-                reward += self_posture_penalty
-                self.current_reward_types['self_posture_increase'] += self_posture_penalty
-                self.flags['self_posture_increase'] = True
-                logger.info(
-                    f"Self posture increased by {deltas['self_posture']:.2f}; penalty applied: {self_posture_penalty:.2f}")
-        else:
-            self.flags['self_posture_increase'] = False
 
         return reward
 
@@ -328,12 +313,10 @@ class GameController:
 
                 self_hp = features['self_hp']
                 boss_hp = features['boss_hp']
-                self_posture = features['self_posture']
 
                 current_time = time.time()
                 if current_time - self.last_feature_log_time >= 1:
-                    logger.info(f'Player Health: {self_hp:.2f}%, Boss Health: {boss_hp:.2f}%, '
-                                f'Player Posture: {self_posture:.2f}%')
+                    logger.info(f'Player Health: {self_hp:.2f}%, Boss Health: {boss_hp:.2f}%')
                     self.last_feature_log_time = current_time
 
                 reward, self.defeated = self.action_judge(state_obj)

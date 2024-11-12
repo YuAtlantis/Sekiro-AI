@@ -13,7 +13,7 @@ DEBUG_MODE = False  # Set to True to enable debugging visuals
 HEALTH_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 POSTURE_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
 
-REQUIRED_CONSECUTIVE_FRAMES = 14
+REQUIRED_CONSECUTIVE_FRAMES = 10
 CHANGE_THRESHOLD = 1.0
 
 # Initialize buffers with deque to maintain a fixed length

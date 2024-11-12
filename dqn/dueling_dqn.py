@@ -12,11 +12,12 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.init as init
 from threading import Lock, Event
+from torchvision.models import resnet50
 from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 
 # Experience replay buffer size
-REPLAY_SIZE = 8800
+REPLAY_SIZE = 8888
 # Minibatch size
 SMALL_BATCH_SIZE = 64
 BIG_BATCH_SIZE = 128
@@ -41,70 +42,63 @@ class DuelingDQN(nn.Module):
         super(DuelingDQN, self).__init__()
         self.action_space = action_space
 
-        # Define the Convolutional Neural Network (CNN)
-        self.conv_layers = nn.Sequential(
-            nn.Conv2d(input_channels, 32, kernel_size=8, stride=4),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2),
-            nn.ReLU(),
-            nn.Conv2d(128, 128, kernel_size=3, stride=1),
-            nn.ReLU()
-        )
+        # Use ResNet50 as the feature extractor
+        self.resnet = resnet50(pretrained=False)
+        self.resnet.conv1 = nn.Conv2d(input_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.resnet.fc = nn.Identity()
 
-        # Compute the flattened size of the output from convolutional layers
-        def compute_flattened_size():
-            with torch.no_grad():
-                dummy_input = torch.zeros(1, input_channels, 128, 128)
-                output = self.conv_layers(dummy_input)
-                return output.view(1, -1).size(1)
+        # Get the output feature dimension of ResNet50
+        flattened_size = 2048  # ResNet50 last layer output dimension
 
-        flattened_size = compute_flattened_size()
+        # Transformer parameters
+        self.embed_dim = 256  # Embedding dimension
+        self.seq_length = flattened_size // self.embed_dim  # Sequence length (2048 / 256 = 8)
 
-        # Set parameters for the self-attention layer
-        self.embed_dim = 128  # Embedding dimension for the attention layer
-        self.seq_length = flattened_size // self.embed_dim  # Sequence length
+        # Adjust feature dimensions to fit the Transformer
+        self.fc = nn.Linear(flattened_size, self.seq_length * self.embed_dim)
 
-        # Adjust flattened size if it is not divisible
-        adjusted_flattened_size = self.seq_length * self.embed_dim
-
-        # Linear layer to adjust flattened features to fit the attention layer's required size
-        self.fc = nn.Linear(flattened_size, adjusted_flattened_size)
+        # Positional Encoding
+        self.positional_encoding = nn.Parameter(torch.zeros(1, self.seq_length, self.embed_dim))
 
         # Multi-head self-attention layer
-        self.attention_layer = nn.MultiheadAttention(embed_dim=self.embed_dim, num_heads=8, batch_first=True)
+        self.attention_layer = nn.MultiheadAttention(embed_dim=self.embed_dim, num_heads=8, dropout=0.1,
+                                                     batch_first=True)
 
-        # Value stream and advantage stream
+        # Value stream and advantage stream with Dropout
         self.value_stream = nn.Sequential(
-            nn.Linear(self.seq_length * self.embed_dim, 256),
+            nn.Linear(self.seq_length * self.embed_dim, 512),
             nn.ReLU(),
-            nn.Dropout(p=0.3),
-            nn.Linear(256, 1)
+            nn.Dropout(p=0.1),
+            nn.Linear(512, 1)
         )
 
         self.advantage_stream = nn.Sequential(
-            nn.Linear(self.seq_length * self.embed_dim, 256),
+            nn.Linear(self.seq_length * self.embed_dim, 512),
             nn.ReLU(),
-            nn.Dropout(p=0.3),
-            nn.Linear(256, action_space)
+            nn.Dropout(p=0.1),
+            nn.Linear(512, action_space)
         )
 
     def forward(self, x):
-        x = self.conv_layers(x)  # Output shape: [batch_size, channels, H, W]
-        x = x.view(x.size(0), -1)  # Flatten, shape: [batch_size, flattened_size]
-        x = self.fc(x)  # Adjust features, shape: [batch_size, seq_length * embed_dim]
+        # ResNet feature extraction
+        x = self.resnet(x)  # Output shape: [batch_size, 2048]
+
+        x = self.fc(x)  # Adjust to [batch_size, seq_length * embed_dim]
         x = x.view(x.size(0), self.seq_length, self.embed_dim)  # Reshape to [batch_size, seq_length, embed_dim]
 
-        # Apply self-attention mechanism
+        # Add positional encoding
+        x = x + self.positional_encoding  # [batch_size, seq_length, embed_dim]
+
+        # Self-Attention
         x, _ = self.attention_layer(x, x, x)  # Output shape: [batch_size, seq_length, embed_dim]
 
-        x = x.contiguous().view(x.size(0), -1)  # Flatten again to [batch_size, seq_length * embed_dim]
+        x = x.contiguous().view(x.size(0), -1)  # Flatten to [batch_size, seq_length * embed_dim]
 
-        # Calculate value and advantage
+        # Compute value function and advantage function
         v = self.value_stream(x)
         a = self.advantage_stream(x)
 
+        # Combine to form Q-values
         q = v + (a - a.mean(dim=1, keepdim=True))
         return q
 
@@ -432,8 +426,8 @@ class DQNAgent:
         # Increment global_step
         self.global_step += 1
 
-        # Save replay buffer every 10 steps
-        if self.global_step % 5 == 0:
+        # Save replay buffer every 8 steps
+        if self.global_step % 10 == 0:
             replay_buffer_path = os.path.join(self.model_folder, f"replay_buffer_size_{len(self.replay_buffer)}.pkl.gz")
             self.save_replay_buffer_async(replay_buffer_path)
 
@@ -445,7 +439,7 @@ class DQNAgent:
                 print(f"Starting training step with buffer size: {buffer_length}")
                 self.train_step()
                 print(f"Completed training step. Current step: {self.global_step}")
-                time.sleep(60)
+                time.sleep(50)
             else:
                 print(f"Current buffer size is: {buffer_length}")
                 time.sleep(5)
@@ -454,7 +448,6 @@ class DQNAgent:
         """Start the training thread."""
         self.training_thread = threading.Thread(target=self.training_loop, daemon=True)
         self.training_thread.start()
-        print("Training thread started.")
 
     def stop_training_thread(self):
         """Stop the training thread."""

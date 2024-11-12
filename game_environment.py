@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 import logging
 import threading
+import time
 from cv.health_posture import extract_health, extract_posture, update_health, update_posture
 from cv.ocr_utils import get_remaining_uses
 from cv.screen_capture import grab_full_screen, grab_region
@@ -43,6 +44,7 @@ class GameEnvironment:
             img = grab_full_screen()
             with self.screen_lock:
                 self.full_screen_img = img
+                time.sleep(0.003)
 
     def grab_screens(self):
         """Extract necessary regions from the captured full screen image."""
