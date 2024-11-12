@@ -17,7 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 
 # Experience replay buffer size
-REPLAY_SIZE = 8888
+REPLAY_SIZE = 9000
 # Minibatch size
 SMALL_BATCH_SIZE = 64
 BIG_BATCH_SIZE = 128
@@ -25,10 +25,10 @@ BATCH_SIZE_DOOR = 1000
 
 # Hyperparameters for Dueling DQN
 GAMMA = 0.99
-INITIAL_EPSILON = 1.0
+INITIAL_EPSILON = 0.8
 FINAL_EPSILON = 0.01
 EPSILON_DECAY = 50000
-LR = 0.0001
+LR = 0.00001
 ALPHA = 0.5
 BETA_START = 0.4
 BETA_FRAMES = 200000

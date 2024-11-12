@@ -29,15 +29,15 @@ class GameController:
         self.last_time_penalty_update = time.time()
         self.time_penalty_increment = -0.001
 
-        self.last_actions = deque(maxlen=12)
+        self.last_actions = deque(maxlen=8)
 
         self.defeated = 0
 
         self.missing_boss_hp_steps = 0
-        self.boss_lives = 2
+        self.boss_lives = 1
 
         self.steps_since_last_attack = 0
-        self.idle_threshold = 10
+        self.idle_threshold = 6
 
         self.defeat_window_start = None
         self.env = GameEnvironment()
@@ -50,13 +50,13 @@ class GameController:
             '25%': False
         }
         self.reward_weights = {
-            'self_hp_loss': -0.7,
+            'self_hp_loss': -0.5,
             'boss_hp_loss': 10.0,
-            'self_death': -15,
+            'self_death': -12,
             'defeat_bonus': 35,
-            'time_penalty': -0.0008,
+            'time_penalty': -0.001,
             "intermediate_defeat": 0,
-            'idle_penalty': -2
+            'idle_penalty': -3
         }
 
         self.reward_type_distribution = {
@@ -322,7 +322,7 @@ class GameController:
                 reward, self.defeated = self.action_judge(state_obj)
 
                 if not self.env.manual:
-                    if all(a == action for a in self.last_actions) and len(self.last_actions) == 12:
+                    if all(a == action for a in self.last_actions) and len(self.last_actions) == 8:
                         reward += self.reward_weights['idle_penalty']
                         self.current_reward_types['idle_penalty'] += self.reward_weights['idle_penalty']
                         logger.info("Idle penalty applied due to prolonged same activity.")
