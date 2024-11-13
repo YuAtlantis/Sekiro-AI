@@ -69,14 +69,14 @@ class DuelingDQN(nn.Module):
         self.value_stream = nn.Sequential(
             nn.Linear(self.seq_length * self.embed_dim, 512),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
+            nn.Dropout(p=0.3),
             nn.Linear(512, 1)
         )
 
         self.advantage_stream = nn.Sequential(
             nn.Linear(self.seq_length * self.embed_dim, 512),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
+            nn.Dropout(p=0.3),
             nn.Linear(512, action_space)
         )
 
