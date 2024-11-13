@@ -4,6 +4,7 @@ import pickle
 import random
 import torch
 import time
+import math
 import threading
 import numpy as np
 import torch.optim.lr_scheduler as lr_scheduler
@@ -17,7 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast, GradScaler
 
 # Experience replay buffer size
-REPLAY_SIZE = 9000
+REPLAY_SIZE = 7000
 # Minibatch size
 SMALL_BATCH_SIZE = 64
 BIG_BATCH_SIZE = 128
@@ -27,11 +28,11 @@ BATCH_SIZE_DOOR = 1000
 GAMMA = 0.99
 INITIAL_EPSILON = 0.8
 FINAL_EPSILON = 0.01
-EPSILON_DECAY = 50000
-LR = 0.00001
-ALPHA = 0.5
+EPSILON_DECAY = 120
+LR = 1e-5
+ALPHA = 0.7
 BETA_START = 0.4
-BETA_FRAMES = 200000
+BETA_FRAMES = 2000
 
 # Check if GPU is available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -179,6 +180,10 @@ class PrioritizedReplayBuffer:
         self.lock = Lock()
 
     def add(self, error, sample):
+        state, action, reward, next_state, done = sample
+        if torch.isnan(state).any() or torch.isnan(next_state).any() or math.isnan(reward):
+            print("NaN detected in sample, skipping.")
+            return
         p = (error + 1e-5) ** self.alpha
         with self.lock:
             self.max_priority = max(self.max_priority, p)
@@ -285,10 +290,14 @@ class DQNAgent:
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def update_target_network(self, train_step_interval=5000):
-        if self.global_step % train_step_interval == 0:
+    def update_target_network(self):
+        if self.global_step < 50:
+            update_interval = 6
+        else:
+            update_interval = 18
+        if self.global_step % update_interval == 0:
             self.target_net.load_state_dict(self.eval_net.state_dict())
-            print(f"Target network updated at global step {self.global_step}")
+            print(f"Target network updated at step {self.global_step}")
 
     def choose_action(self, state, action_mask):
         if random.random() <= self.epsilon:
@@ -306,14 +315,11 @@ class DQNAgent:
                 action = torch.argmax(masked_q_values).item()
             else:
                 raise ValueError("State input must have 4 dimensions: [batch, channels, height, width]")
-        self.epsilon = max(FINAL_EPSILON, self.epsilon - (INITIAL_EPSILON - FINAL_EPSILON) / EPSILON_DECAY)
+        self.epsilon = FINAL_EPSILON + (INITIAL_EPSILON - FINAL_EPSILON) * math.exp(-1. * self.global_step / EPSILON_DECAY)
         return action
 
     def store_transition(self, state, action, reward, next_state, done):
-        state = state.to(device)
-        next_state = next_state.to(device)
-        max_priority = self.replay_buffer.max_priority
-        self.replay_buffer.add(max_priority, (state, action, reward, next_state, done))
+        self.replay_buffer.add(self.replay_buffer.max_priority, (state, action, reward, next_state, done))
 
     def log_metrics(self, loss, reward_sum, q_max, q_min, q_mean, target_q_max, target_q_min, target_q_mean,
                     total_norm):
@@ -426,7 +432,7 @@ class DQNAgent:
         # Increment global_step
         self.global_step += 1
 
-        # Save replay buffer every 8 steps
+        # Save replay buffer every 10 steps
         if self.global_step % 10 == 0:
             replay_buffer_path = os.path.join(self.model_folder, f"replay_buffer_size_{len(self.replay_buffer)}.pkl.gz")
             self.save_replay_buffer_async(replay_buffer_path)
@@ -435,11 +441,11 @@ class DQNAgent:
         """Continuous training loop running in a separate thread."""
         while not self.training_stop_event.is_set():
             buffer_length = len(self.replay_buffer)
-            if buffer_length >= 4000:
+            if buffer_length >= 3500:
                 print(f"Starting training step with buffer size: {buffer_length}")
                 self.train_step()
                 print(f"Completed training step. Current step: {self.global_step}")
-                time.sleep(50)
+                time.sleep(60)
             else:
                 print(f"Current buffer size is: {buffer_length}")
                 time.sleep(5)
